@@ -39,6 +39,7 @@ export function PixiStage({ width, height, currentFrame, maxFrames }: Props) {
 
     const app = new PIXI.Application();
     appRef.current = app;
+    let cancelled = false;
 
     (async () => {
       await app.init({
@@ -50,8 +51,17 @@ export function PixiStage({ width, height, currentFrame, maxFrames }: Props) {
         autoDensity: true,
       });
 
-      hostRef.current!.innerHTML = "";
-      hostRef.current!.appendChild(app.canvas);
+      if (cancelled) {
+        // Component unmounted before init completed
+        app.destroy(true);
+        return;
+      }
+
+      const host = hostRef.current;
+      if (!host) return;
+
+      host.innerHTML = "";
+      host.appendChild(app.canvas);
 
       // onion skin sprite (behind)
       const onion = new PIXI.Sprite(PIXI.Texture.EMPTY);
@@ -138,7 +148,12 @@ export function PixiStage({ width, height, currentFrame, maxFrames }: Props) {
     })();
 
     return () => {
-      app.destroy(true);
+      cancelled = true;
+      if (app.renderer) {
+        app.destroy(true);
+      } else {
+        app.destroy();
+      }
       appRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -147,7 +162,7 @@ export function PixiStage({ width, height, currentFrame, maxFrames }: Props) {
   // Resize handling
   useEffect(() => {
     surface.resize(width, height);
-    if (appRef.current) {
+    if (appRef.current?.renderer) {
       appRef.current.renderer.resize(width, height);
       refreshDrawTextureFromSurface();
       refreshOnionTexture();
