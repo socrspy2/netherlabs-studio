@@ -86,6 +86,8 @@ function LayersPanel() {
     groupSelected,
     ungroupSelected,
     moveLayer,
+    makeMaskFromSelection,
+    toggleMask,
   } =
     useEditor();
   const flatSelection = useMemo(() => new Set(doc.selection), [doc.selection]);
@@ -127,7 +129,9 @@ function LayersPanel() {
             onRename={renameLayer}
             onContextMenu={(id, e) => {
               e.preventDefault();
-              setSelection([id], e.shiftKey);
+              if (!flatSelection.has(id)) {
+                setSelection([id], e.shiftKey);
+              }
               setMenu({ id, x: e.clientX, y: e.clientY });
             }}
             onMoveLayer={moveLayer}
@@ -149,6 +153,8 @@ function LayersPanel() {
             { label: "Send backward", onClick: () => bring("down") },
             { label: "Group", onClick: () => groupSelected() },
             { label: "Ungroup", onClick: () => ungroupSelected() },
+            { label: "Make Mask", onClick: () => makeMaskFromSelection() },
+            { label: "Toggle Mask", onClick: () => toggleMask(menu.id) },
             { label: "Toggle visibility", onClick: () => toggleVisible(menu.id) },
             { label: "Toggle lock", onClick: () => toggleLocked(menu.id) },
           ]}
@@ -182,7 +188,10 @@ function LayerItem({
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(() => ("shape" in node ? node.shape.name : node.name));
 
-  const label = "shape" in node ? `${node.shape.name} · ${node.shape.type}` : `${node.name} · group`;
+  const label =
+    "shape" in node
+      ? `${node.shape.name} · ${node.shape.type}`
+      : `${node.name} · ${node.mask?.enabled ? "mask group" : "group"}`;
 
   const handleSubmit = () => {
     onRename(node.id, value || label);

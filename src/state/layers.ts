@@ -161,6 +161,49 @@ export function groupWithinSameParent(layers: LayerNode[], ids: string[], name =
   return layers;
 }
 
+export function maskGroupWithinSameParent(layers: LayerNode[], ids: string[], name = "Mask Group"): LayerNode[] {
+  if (ids.length < 2) return layers;
+  const found = ids.map((id) => findNode(layers, id)).filter(Boolean) as NonNullable<ReturnType<typeof findNode>>[];
+  if (found.length !== ids.length) return layers;
+
+  const parentId = found[0].parent ? found[0].parent.id : null;
+  if (!found.every((f) => (f.parent ? f.parent.id : null) === parentId)) return layers;
+
+  const list = found[0].parentList;
+  const selected = new Set(ids);
+
+  // Determine mask layer: topmost (highest index) among selected in this list
+  const indices = found.map((f) => f.index).sort((a, b) => a - b);
+  const maskIndex = Math.max(...indices);
+  const maskNode = list[maskIndex];
+
+  // Pull selected nodes out, keeping original order
+  const extracted: LayerNode[] = [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (selected.has(list[i].id)) {
+      extracted.unshift(list[i]);
+      list.splice(i, 1);
+    }
+  }
+  if (extracted.length < 2) return layers;
+
+  const children = [maskNode, ...extracted.filter((n) => n.id !== maskNode.id)];
+  const groupId = `mask_${crypto.randomUUID()}`;
+  const group: LayerNode = {
+    id: groupId,
+    kind: "group",
+    name,
+    visible: true,
+    locked: false,
+    mask: { enabled: true, maskId: maskNode.id },
+    children,
+  } as any;
+
+  const insertAt = indices[0] ?? list.length;
+  list.splice(insertAt, 0, group);
+  return layers;
+}
+
 export function moveWithinParent(
   layers: LayerNode[],
   draggedId: string,

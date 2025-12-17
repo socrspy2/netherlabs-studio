@@ -5,6 +5,7 @@ export type ToolId =
   | "ellipse"
   | "line"
   | "text"
+  | "pen"
   | "hand"
   | "zoom";
 
@@ -19,6 +20,12 @@ export type Shadow = {
   opacity: number;
 };
 
+export type GradientStop = {
+  offset: number; // 0..1
+  color: string;
+  opacity: number;
+};
+
 export type CornerRadius = {
   tl: number;
   tr: number;
@@ -26,14 +33,25 @@ export type CornerRadius = {
   bl: number;
 };
 
-export type Fill = {
+export type SolidFill = {
   enabled: boolean;
+  kind: "solid";
   color: string;
   opacity: number;
 };
 
-export type Stroke = {
+export type LinearGradientFill = {
   enabled: boolean;
+  kind: "linear";
+  angle: number; // degrees
+  stops: GradientStop[];
+};
+
+export type Fill = SolidFill | LinearGradientFill;
+
+export type SolidStroke = {
+  enabled: boolean;
+  kind: "solid";
   color: string;
   width: number;
   align: StrokeAlign;
@@ -41,10 +59,51 @@ export type Stroke = {
   opacity: number;
 };
 
+export type LinearGradientStroke = {
+  enabled: boolean;
+  kind: "linear";
+  angle: number;
+  stops: GradientStop[];
+  width: number;
+  align: StrokeAlign;
+  dashed: boolean;
+  opacity: number;
+};
+
+export type Stroke = SolidStroke | LinearGradientStroke;
+
+export type LayerBlendMode =
+  | "normal"
+  | "multiply"
+  | "screen"
+  | "overlay"
+  | "darken"
+  | "lighten"
+  | "color-dodge"
+  | "color-burn"
+  | "linear-dodge"
+  | "linear-burn"
+  | "hard-light"
+  | "soft-light"
+  | "difference"
+  | "exclusion"
+  | "hue"
+  | "saturation"
+  | "color"
+  | "luminosity"
+  | "add"
+  | "subtract"
+  | "divide";
+
+export type Effects = {
+  blur: number;
+  backgroundBlur: number;
+};
+
 export type BaseShape = {
   id: string;
   name: string;
-  type: "rectangle" | "ellipse" | "line" | "text";
+  type: "rectangle" | "ellipse" | "line" | "text" | "path" | "image";
   x: number;
   y: number;
   width: number;
@@ -57,6 +116,8 @@ export type BaseShape = {
   stroke: Stroke;
   radius: CornerRadius;
   shadow: Shadow | null;
+  effects?: Effects;
+  blendMode?: LayerBlendMode;
 };
 
 export type TextShape = BaseShape & {
@@ -67,10 +128,31 @@ export type TextShape = BaseShape & {
   fontWeight: number;
   lineHeight: number;
   align: "left" | "center" | "right";
-  textColor: string;
+  textColor: string; // legacy
+  textFill?: Fill;
 };
 
-export type Shape = BaseShape | TextShape;
+export type BezierHandle = { x: number; y: number };
+
+export type PathPoint = {
+  x: number;
+  y: number;
+  in?: BezierHandle | null;
+  out?: BezierHandle | null;
+};
+
+export type PathShape = BaseShape & {
+  type: "path";
+  points: PathPoint[]; // local coordinates
+  closed: boolean;
+};
+
+export type ImageShape = BaseShape & {
+  type: "image";
+  src: string; // data URL or URL
+};
+
+export type Shape = BaseShape | TextShape | PathShape | ImageShape;
 
 export type GroupNode = {
   id: string;
@@ -78,6 +160,10 @@ export type GroupNode = {
   name: string;
   visible: boolean;
   locked: boolean;
+  mask?: {
+    enabled: boolean;
+    maskId: string;
+  };
   children: LayerNode[];
 };
 
@@ -94,9 +180,15 @@ export type ViewportState = {
   zoom: number;
 };
 
+export type CanvasBackground =
+  | { kind: "preset"; value: "white" | "black" | "blue" }
+  | { kind: "custom"; color: string }
+  | { kind: "checkerboard" };
+
 export type EditorDocument = {
   layers: LayerNode[];
   selection: string[];
   tool: ToolId;
   viewport: ViewportState;
+  canvasBackground: CanvasBackground;
 };

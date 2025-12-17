@@ -7,7 +7,7 @@ import { BottomBar } from "./BottomBar";
 import { useEditor } from "../state/editorStore";
 
 export function EditorShell() {
-  const { undo, redo, moveSelection, deleteSelection, duplicateSelection, setTool } = useEditor();
+  const { undo, redo, moveSelection, deleteSelection, duplicateSelection, setTool, preview, setPreview } = useEditor();
   const [leftWidth, setLeftWidth] = useState(320);
   const [rightWidth, setRightWidth] = useState(360);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
@@ -15,6 +15,8 @@ export function EditorShell() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "z") {
         e.shiftKey ? redo() : undo();
@@ -31,6 +33,11 @@ export function EditorShell() {
         e.preventDefault();
         return;
       }
+      if (preview && e.key === "Escape") {
+        setPreview(false);
+        e.preventDefault();
+        return;
+      }
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         const delta = e.shiftKey ? 10 : 1;
         if (e.key === "ArrowUp") moveSelection(0, -delta, true);
@@ -43,11 +50,12 @@ export function EditorShell() {
       if (e.key.toLowerCase() === "r") setTool("rectangle");
       if (e.key.toLowerCase() === "o") setTool("ellipse");
       if (e.key.toLowerCase() === "t") setTool("text");
+      if (e.key.toLowerCase() === "p") setTool("pen");
       if (e.key.toLowerCase() === "h") setTool("hand");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [deleteSelection, duplicateSelection, moveSelection, redo, setTool, undo]);
+  }, [deleteSelection, duplicateSelection, moveSelection, preview, redo, setPreview, setTool, undo]);
 
   return (
     <div
@@ -57,33 +65,42 @@ export function EditorShell() {
         color: "#e2e8f0",
         display: "flex",
         flexDirection: "column",
+        userSelect: "none",
       }}
     >
       <TopBar />
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-        {!leftCollapsed && (
-          <div style={{ width: leftWidth, minWidth: 240, maxWidth: 520 }}>
-            <LeftPanel />
-          </div>
-        )}
-        <ResizeHandle
-          onDrag={(dx) => setLeftWidth((w) => clamp(w + dx, 240, 520))}
-          onToggleCollapse={() => setLeftCollapsed((v) => !v)}
-        />
-        <div style={{ flex: 1, minWidth: 0 }}>
+      {preview ? (
+        <div style={{ flex: 1, minHeight: 0 }}>
           <CanvasViewport />
         </div>
-        <ResizeHandle
-          onDrag={(dx) => setRightWidth((w) => clamp(w - dx, 260, 560))}
-          onToggleCollapse={() => setRightCollapsed((v) => !v)}
-        />
-        {!rightCollapsed && (
-          <div style={{ width: rightWidth, minWidth: 260, maxWidth: 560 }}>
-            <InspectorPanel />
+      ) : (
+        <>
+          <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+            {!leftCollapsed && (
+              <div style={{ width: leftWidth, minWidth: 240, maxWidth: 520 }}>
+                <LeftPanel />
+              </div>
+            )}
+            <ResizeHandle
+              onDrag={(dx) => setLeftWidth((w) => clamp(w + dx, 240, 520))}
+              onToggleCollapse={() => setLeftCollapsed((v) => !v)}
+            />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <CanvasViewport />
+            </div>
+            <ResizeHandle
+              onDrag={(dx) => setRightWidth((w) => clamp(w - dx, 260, 560))}
+              onToggleCollapse={() => setRightCollapsed((v) => !v)}
+            />
+            {!rightCollapsed && (
+              <div style={{ width: rightWidth, minWidth: 260, maxWidth: 560 }}>
+                <InspectorPanel />
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      <BottomBar />
+          <BottomBar />
+        </>
+      )}
     </div>
   );
 }

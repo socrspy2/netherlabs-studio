@@ -1,5 +1,14 @@
 import React, { useCallback, useMemo, useState } from "react";
-import { flatten, groupWithinSameParent, moveWithinParent, removeNodes, reorder, ungroup, updateShape } from "./layers";
+import {
+  flatten,
+  groupWithinSameParent,
+  maskGroupWithinSameParent,
+  moveWithinParent,
+  removeNodes,
+  reorder,
+  ungroup,
+  updateShape,
+} from "./layers";
 import {
   EditorDocument,
   LayerNode,
@@ -18,6 +27,9 @@ type EditorContextValue = {
   doc: EditorDocument;
   history: History;
   checkpoint: () => void;
+  setCanvasBackground: (bg: EditorDocument["canvasBackground"]) => void;
+  preview: boolean;
+  setPreview: (v: boolean) => void;
   setTool: (tool: ToolId) => void;
   setSelection: (ids: string[], additive?: boolean) => void;
   clearSelection: () => void;
@@ -32,6 +44,8 @@ type EditorContextValue = {
   duplicateSelection: () => void;
   bring: (dir: "front" | "back" | "up" | "down") => void;
   moveLayer: (draggedId: string, targetId: string, position: "before" | "after") => void;
+  makeMaskFromSelection: () => void;
+  toggleMask: (groupId: string) => void;
   toggleVisible: (id: string) => void;
   toggleLocked: (id: string) => void;
   renameLayer: (id: string, name: string) => void;
@@ -44,9 +58,10 @@ type EditorContextValue = {
 const EditorContext = React.createContext<EditorContextValue | null>(null);
 
 function baseShape(type: Shape["type"], name: string, x: number, y: number): Shape {
-  const fillDefault = { enabled: true, color: "#4f46e5", opacity: 1 };
+  const fillDefault = { enabled: true, kind: "solid", color: "#4f46e5", opacity: 1 } as Shape["fill"];
   const strokeDefault = {
     enabled: true,
+    kind: "solid",
     color: "#0f172a",
     width: 2,
     align: "center",
@@ -70,6 +85,8 @@ function baseShape(type: Shape["type"], name: string, x: number, y: number): Sha
     stroke: strokeDefault,
     radius: { tl: 8, tr: 8, br: 8, bl: 8 },
     shadow: { x: 0, y: 4, blur: 12, spread: 0, color: "#000000", opacity: 0.16 },
+    effects: { blur: 0, backgroundBlur: 0 },
+    blendMode: "normal",
   };
 
   if (type === "text") {
@@ -85,11 +102,20 @@ function baseShape(type: Shape["type"], name: string, x: number, y: number): Sha
       lineHeight: 1.4,
       align: "left",
       textColor: "#111827",
+      textFill: { enabled: true, kind: "solid", color: "#111827", opacity: 1 },
     } as Shape;
   }
 
   if (type === "line") {
     return { ...common, fill: { ...common.fill, enabled: false }, height: 0 } as Shape;
+  }
+
+  if (type === "path") {
+    return { ...common, type: "path", points: [], closed: false } as any;
+  }
+
+  if (type === "image") {
+    return { ...common, type: "image", src: "" } as any;
   }
 
   return common as Shape;
@@ -99,13 +125,13 @@ function initialDoc(): EditorDocument {
   const rect = baseShape("rectangle", "Hero Card", 200, 180);
   rect.width = 320;
   rect.height = 220;
-  rect.fill = { enabled: true, color: "#c7d2fe", opacity: 1 };
+  rect.fill = { enabled: true, kind: "solid", color: "#c7d2fe", opacity: 1 };
   rect.radius = { tl: 16, tr: 16, br: 16, bl: 16 };
 
   const ellipse = baseShape("ellipse", "Accent", 620, 220);
   ellipse.width = 160;
   ellipse.height = 160;
-  ellipse.fill = { enabled: true, color: "#fbbf24", opacity: 0.9 };
+  ellipse.fill = { enabled: true, kind: "solid", color: "#fbbf24", opacity: 0.9 };
 
   const text = baseShape("text", "Title", 240, 220) as any;
   text.text = "Design Surface";
@@ -113,6 +139,7 @@ function initialDoc(): EditorDocument {
   text.fontWeight = 700;
   text.lineHeight = 1.35;
   text.textColor = "#111827";
+  text.textFill = { enabled: true, kind: "solid", color: "#111827", opacity: 1 };
   text.width = 260;
   text.height = 140;
 
@@ -125,12 +152,14 @@ function initialDoc(): EditorDocument {
     selection: [rect.id],
     tool: "select",
     viewport: { pan: { x: 120, y: 60 }, zoom: 1 },
+    canvasBackground: { kind: "checkerboard" },
   };
 }
 
 export function EditorProvider({ children }: { children: React.ReactNode }) {
   const [doc, setDoc] = useState<EditorDocument>(() => initialDoc());
   const [history, setHistory] = useState<History>({ past: [], future: [] });
+  const [preview, setPreview] = useState(false);
 
   const checkpoint = useCallback(() => {
     setHistory((h) => ({
@@ -138,6 +167,10 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       future: [],
     }));
   }, [doc]);
+
+  const setCanvasBackground = useCallback((bg: EditorDocument["canvasBackground"]) => {
+    setDoc((d) => ({ ...d, canvasBackground: bg }));
+  }, []);
 
   const commit = useCallback(
     (next: EditorDocument, pushHistory = true) => {
@@ -295,6 +328,27 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
     [commit, doc]
   );
 
+  const makeMaskFromSelection = useCallback(() => {
+    if (doc.selection.length < 2) return;
+    const next = structuredClone(doc);
+    next.layers = maskGroupWithinSameParent(next.layers, doc.selection, "Mask");
+    const grouped = flatten(next.layers).find((n) => n.kind === "group" && n.mask?.enabled);
+    next.selection = grouped ? [grouped.id] : [];
+    commit(next);
+  }, [commit, doc]);
+
+  const toggleMask = useCallback(
+    (groupId: string) => {
+      const next = structuredClone(doc);
+      const flat = flatten(next.layers);
+      const node = flat.find((n) => n.kind === "group" && n.id === groupId) as any;
+      if (!node?.mask) return;
+      node.mask.enabled = !node.mask.enabled;
+      commit(next);
+    },
+    [commit, doc]
+  );
+
   const toggleVisible = useCallback(
     (id: string) => {
       const next = structuredClone(doc);
@@ -381,6 +435,9 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       doc,
       history,
       checkpoint,
+      setCanvasBackground,
+      preview,
+      setPreview,
       setTool,
       setSelection,
       clearSelection,
@@ -395,6 +452,8 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       duplicateSelection,
       bring,
       moveLayer,
+      makeMaskFromSelection,
+      toggleMask,
       toggleVisible,
       toggleLocked,
       renameLayer,
@@ -407,6 +466,9 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       doc,
       history,
       checkpoint,
+      setCanvasBackground,
+      preview,
+      setPreview,
       setTool,
       setSelection,
       clearSelection,
@@ -421,6 +483,8 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       duplicateSelection,
       bring,
       moveLayer,
+      makeMaskFromSelection,
+      toggleMask,
       toggleVisible,
       toggleLocked,
       renameLayer,

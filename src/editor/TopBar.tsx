@@ -6,11 +6,14 @@ import {
   Circle,
   Minus,
   Type,
+  PenTool,
   Hand,
   ZoomIn,
   Undo2,
   Redo2,
   PanelTop,
+  Play,
+  X,
 } from "lucide-react";
 import { useEditor } from "../state/editorStore";
 import { ToolId } from "../state/types";
@@ -22,14 +25,15 @@ const toolIcons: Record<ToolId, React.ReactNode> = {
   ellipse: <Circle size={16} />,
   line: <Minus size={16} />,
   text: <Type size={16} />,
+  pen: <PenTool size={16} />,
   hand: <Hand size={16} />,
   zoom: <ZoomIn size={16} />,
 };
 
-const toolOrder: ToolId[] = ["select", "frame", "rectangle", "ellipse", "line", "text", "hand", "zoom"];
+const toolOrder: ToolId[] = ["select", "frame", "rectangle", "ellipse", "line", "text", "pen", "hand", "zoom"];
 
 export function TopBar() {
-  const { doc, setTool, undo, redo } = useEditor();
+  const { doc, setTool, undo, redo, preview, setPreview } = useEditor();
 
   return (
     <header
@@ -91,6 +95,13 @@ export function TopBar() {
       </div>
 
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+        <button
+          onClick={() => setPreview(!preview)}
+          style={iconBtnStyle}
+          title={preview ? "Exit Preview" : "Preview"}
+        >
+          {preview ? <X size={16} /> : <Play size={16} />}
+        </button>
         <button
           onClick={undo}
           style={iconBtnStyle}

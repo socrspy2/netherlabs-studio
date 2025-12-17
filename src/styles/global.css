@@ -18,3 +18,8 @@ html, body {
 button, input, select {
   font: inherit;
 }
+
+/* Make the editor feel app-like (no accidental text selection) */
+#root {
+  height: 100%;
+}
