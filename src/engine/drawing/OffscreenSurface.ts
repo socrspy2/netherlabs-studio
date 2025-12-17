@@ -6,7 +6,7 @@ export class OffscreenSurface {
     this.canvas = document.createElement("canvas");
     this.canvas.width = width;
     this.canvas.height = height;
-    const ctx = this.canvas.getContext("2d");
+    const ctx = this.canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) throw new Error("2D ctx not available");
     this.ctx = ctx;
     this.clear();

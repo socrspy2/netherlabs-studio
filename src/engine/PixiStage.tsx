@@ -38,9 +38,11 @@ export function PixiStage({ width, height, currentFrame, maxFrames }: Props) {
     if (!hostRef.current) return;
 
     const app = new PIXI.Application();
-    appRef.current = app;
+    let disposed = false;
+    let initialized = false;
+    let removePointerListeners: (() => void) | null = null;
 
-    (async () => {
+    const setup = async () => {
       await app.init({
         width,
         height,
@@ -49,9 +51,23 @@ export function PixiStage({ width, height, currentFrame, maxFrames }: Props) {
         resolution: window.devicePixelRatio || 1,
         autoDensity: true,
       });
+      initialized = true;
 
-      hostRef.current!.innerHTML = "";
-      hostRef.current!.appendChild(app.canvas);
+      if (disposed) {
+        app.destroy(true);
+        return;
+      }
+
+      const host = hostRef.current;
+      if (!host) {
+        app.destroy(true);
+        return;
+      }
+
+      appRef.current = app;
+
+      host.innerHTML = "";
+      host.appendChild(app.canvas);
 
       // onion skin sprite (behind)
       const onion = new PIXI.Sprite(PIXI.Texture.EMPTY);
@@ -128,18 +144,23 @@ export function PixiStage({ width, height, currentFrame, maxFrames }: Props) {
       canvas.addEventListener("pointermove", onMove);
       canvas.addEventListener("pointerup", onUp);
       canvas.addEventListener("pointercancel", onUp);
-
-      return () => {
+      removePointerListeners = () => {
         canvas.removeEventListener("pointerdown", onDown);
         canvas.removeEventListener("pointermove", onMove);
         canvas.removeEventListener("pointerup", onUp);
         canvas.removeEventListener("pointercancel", onUp);
       };
-    })();
+    };
+
+    setup().catch((err) => console.error("Pixi init failed", err));
 
     return () => {
-      app.destroy(true);
+      disposed = true;
+      removePointerListeners?.();
       appRef.current = null;
+      if (initialized) {
+        app.destroy(true);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
