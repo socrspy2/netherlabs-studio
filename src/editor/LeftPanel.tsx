@@ -16,8 +16,8 @@ export function LeftPanel() {
   return (
     <aside
       style={{
-        borderRight: "1px solid rgba(255,255,255,0.08)",
-        background: "rgba(15,23,42,0.8)",
+        borderRight: "1px solid var(--border)",
+        background: "var(--panel)",
         backdropFilter: "blur(8px)",
         display: "flex",
         flexDirection: "column",
@@ -32,9 +32,9 @@ export function LeftPanel() {
             style={{
               height: 36,
               borderRadius: 10,
-              border: "1px solid rgba(255,255,255,0.08)",
-              background: tab === t.id ? "rgba(148,163,184,0.2)" : "transparent",
-              color: "#e2e8f0",
+              border: "1px solid var(--border)",
+              background: tab === t.id ? "var(--selection)" : "transparent",
+              color: "var(--text)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -59,7 +59,7 @@ export function LeftPanel() {
 
 function PagesPanel() {
   return (
-    <div style={{ color: "#cbd5e1", fontSize: 13, opacity: 0.8 }}>
+    <div style={{ color: "var(--text-muted)", fontSize: 13, opacity: 0.8 }}>
       Single page for now — multipage flows coming soon.
     </div>
   );
@@ -67,7 +67,7 @@ function PagesPanel() {
 
 function AssetsPanel() {
   return (
-    <div style={{ color: "#cbd5e1", fontSize: 13, opacity: 0.8 }}>
+    <div style={{ color: "var(--text-muted)", fontSize: 13, opacity: 0.8 }}>
       Drop assets or components here later.
     </div>
   );
@@ -207,8 +207,8 @@ function LayerItem({
           display: "flex",
           alignItems: "center",
           gap: 8,
-          background: selected ? "rgba(148,163,184,0.2)" : "transparent",
-          border: "1px solid rgba(255,255,255,0.08)",
+          background: selected ? "var(--selection)" : "transparent",
+          border: "1px solid var(--border)",
           borderRadius: 10,
           padding: "6px 8px",
           marginLeft: depth * 12,
@@ -274,16 +274,16 @@ function LayerItem({
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             style={{
               flex: 1,
-              background: "rgba(255,255,255,0.06)",
-              border: "1px solid rgba(255,255,255,0.1)",
+              background: "var(--control)",
+              border: "1px solid var(--border-strong)",
               borderRadius: 8,
-              color: "#e2e8f0",
+              color: "var(--text)",
               padding: "6px 8px",
               fontSize: 12,
             }}
           />
         ) : (
-          <div style={{ flex: 1, fontSize: 12, color: "#e2e8f0" }}>{label}</div>
+          <div style={{ flex: 1, fontSize: 12, color: "var(--text)" }}>{label}</div>
         )}
       </div>
 
@@ -311,9 +311,9 @@ const miniBtn: React.CSSProperties = {
   height: 28,
   width: 28,
   borderRadius: 8,
-  border: "1px solid rgba(255,255,255,0.08)",
-  background: "rgba(255,255,255,0.05)",
-  color: "#e2e8f0",
+  border: "1px solid var(--border)",
+  background: "var(--control)",
+  color: "var(--text)",
   cursor: "pointer",
   display: "grid",
   placeItems: "center",
@@ -343,8 +343,8 @@ function ContextMenu({
         position: "fixed",
         left: x,
         top: y,
-        background: "rgba(15,23,42,0.98)",
-        border: "1px solid rgba(255,255,255,0.08)",
+        background: "var(--panel-strong)",
+        border: "1px solid var(--border)",
         borderRadius: 12,
         padding: 6,
         display: "flex",
@@ -365,9 +365,9 @@ function ContextMenu({
           style={{
             height: 32,
             borderRadius: 10,
-            border: "1px solid rgba(255,255,255,0.06)",
-            background: "rgba(255,255,255,0.04)",
-            color: "#e2e8f0",
+            border: "1px solid var(--border)",
+            background: "var(--control)",
+            color: "var(--text)",
             cursor: "pointer",
             textAlign: "left",
             padding: "0 10px",

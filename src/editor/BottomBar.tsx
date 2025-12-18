@@ -8,14 +8,14 @@ export function BottomBar() {
     <div
       style={{
         height: 38,
-        borderTop: "1px solid rgba(255,255,255,0.08)",
-        background: "rgba(15,23,42,0.92)",
+        borderTop: "1px solid var(--border)",
+        background: "var(--panel)",
         display: "flex",
         alignItems: "center",
         padding: "0 12px",
         gap: 12,
         fontSize: 12,
-        color: "#cbd5e1",
+        color: "var(--text-muted)",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
