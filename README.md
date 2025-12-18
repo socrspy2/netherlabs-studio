@@ -56,7 +56,7 @@ Things might be unfinished, broken, or missing.
 
 Feedback, issues, and pull requests are welcome.
 
-Contributing 🤝
+# Contributing 🤝
 
 If you want to help, feel free to open an issue, suggest features, submit a PR, or share ideas around exports, animations, or workflows.
 
