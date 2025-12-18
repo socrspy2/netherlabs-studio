@@ -185,10 +185,16 @@ export type CanvasBackground =
   | { kind: "custom"; color: string }
   | { kind: "checkerboard" };
 
+export type CanvasSize = {
+  width: number;
+  height: number;
+};
+
 export type EditorDocument = {
   layers: LayerNode[];
   selection: string[];
   tool: ToolId;
   viewport: ViewportState;
   canvasBackground: CanvasBackground;
+  canvasSize: CanvasSize;
 };

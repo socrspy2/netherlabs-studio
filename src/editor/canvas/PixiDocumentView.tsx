@@ -3,6 +3,8 @@ import * as PIXI from "pixi.js";
 import { useEditor } from "../../state/editorStore";
 import { Fill, ImageShape, LayerNode, PathShape, Shape, Stroke, TextShape } from "../../state/types";
 
+const DEFAULT_ARTBOARD = { width: 1800, height: 1200 };
+
 export function PixiDocumentView() {
   const { doc } = useEditor();
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -11,6 +13,7 @@ export function PixiDocumentView() {
   const worldRef = useRef<PIXI.Container | null>(null);
   const mountedRef = useRef(false);
   const [readyTick, setReadyTick] = useState(0);
+  const artboard = doc.canvasSize || DEFAULT_ARTBOARD;
 
   // init
   useEffect(() => {
@@ -153,6 +156,7 @@ export function PixiDocumentView() {
       app,
       createdRenderTextures,
       idToDisplay,
+      artboard,
     });
 
     try {
@@ -164,12 +168,10 @@ export function PixiDocumentView() {
     return () => {
       createdRenderTextures.forEach((t) => t.destroy(true));
     };
-  }, [flatLayers, readyTick]);
+  }, [flatLayers, readyTick, artboard.height, artboard.width]);
 
   return <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />;
 }
-
-const ARTBOARD = { width: 1800, height: 1200 };
 
 function buildShape(shape: Shape): PIXI.Container | null {
   if (!shape.visible) return null;
@@ -398,6 +400,7 @@ function renderNodes(args: {
   app: PIXI.Application;
   createdRenderTextures: PIXI.Texture[];
   idToDisplay: Map<string, PIXI.Container>;
+  artboard: { width: number; height: number };
 }) {
   for (const node of args.nodes) {
     if (node.kind === "group") {
@@ -422,8 +425,8 @@ function renderNodes(args: {
     const bg = shape.effects?.backgroundBlur ?? 0;
     if (bg > 0) {
       const rt = (PIXI as any).RenderTexture.create({
-        width: ARTBOARD.width,
-        height: ARTBOARD.height,
+        width: args.artboard.width,
+        height: args.artboard.height,
         resolution: (args.app.renderer as any).resolution ?? 1,
       });
       args.createdRenderTextures.push(rt);

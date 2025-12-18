@@ -573,6 +573,7 @@ export function CanvasViewport() {
 
   const zoomLabel = `${Math.round(doc.viewport.zoom * 100)}%`;
   const paperBackground = getCanvasPaperStyle(doc.canvasBackground);
+  const canvasSize = doc.canvasSize || { width: 1800, height: 1200 };
 
   return (
     <div style={{ position: "relative", minHeight: 0, height: "100%", background: "var(--canvas)", display: "flex", flexDirection: "column" }}>
@@ -585,7 +586,8 @@ export function CanvasViewport() {
           <Sparkle size={14} />
           <span style={{ fontSize: 12, opacity: 0.8 }}>Smart select & handles</span>
         </div>
-        <div style={{ marginLeft: "auto", fontSize: 12, opacity: 0.8 }}>Zoom {zoomLabel}</div>
+        <div style={{ marginLeft: "auto", fontSize: 12, opacity: 0.8 }}>Canvas {canvasSize.width}×{canvasSize.height}</div>
+        <div style={{ marginLeft: 12, fontSize: 12, opacity: 0.8 }}>Zoom {zoomLabel}</div>
       </div>
       <div
         ref={containerRef}
@@ -648,14 +650,14 @@ export function CanvasViewport() {
               transformOrigin: "0 0",
             }}
           >
-            <svg width={1800} height={1200} style={{ overflow: "visible" }}>
+            <svg width={canvasSize.width} height={canvasSize.height} style={{ overflow: "visible" }}>
               <defs>
                 <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
                   <rect width="40" height="40" fill="none" stroke="var(--border)" strokeWidth="1" opacity={0.3} />
                   <rect width="10" height="10" fill="none" stroke="var(--border)" strokeWidth="0.5" opacity={0.18} />
                 </pattern>
               </defs>
-              <rect width="1800" height="1200" fill="url(#grid)" />
+              <rect width={canvasSize.width} height={canvasSize.height} fill="url(#grid)" />
 
               {activeShape && <PreviewShapeOutline shape={activeShape} />}
               {doc.tool === "pen" && penDraft?.points?.length ? (
@@ -699,7 +701,7 @@ export function CanvasViewport() {
                 transformOrigin: "0 0",
               }}
             >
-              <svg width={1800} height={1200} style={{ overflow: "visible", pointerEvents: "none" }}>
+              <svg width={canvasSize.width} height={canvasSize.height} style={{ overflow: "visible", pointerEvents: "none" }}>
                 {selectionBounds && (
                   <SelectionOutline
                     bounds={selectionBounds}
@@ -996,7 +998,7 @@ function getCanvasPaperStyle(bg: any): React.CSSProperties {
   if (!bg) return { background: "var(--canvas)" };
   if (bg.kind === "preset") {
     if (bg.value === "white") return { background: "#ffffff" };
-    if (bg.value === "black") return { background: "#0b0f1a" };
+    if (bg.value === "black") return { background: "#0a0a0a" };
     return { background: "var(--canvas)" };
   }
   if (bg.kind === "custom") {

@@ -107,7 +107,7 @@
   --badge-from: #111827;
   --badge-to: #1f2937;
   --badge-text: #f8fafc;
-  --canvas: #0b0f1a;
+  --canvas: #0a0a0a;
 }
 
 [data-theme="white"] {
@@ -146,6 +146,34 @@ html, body {
 
 button, input, select {
   font: inherit;
+}
+
+select {
+  appearance: none;
+  background: var(--control);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  height: 32px;
+  padding: 0 32px 0 10px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text) 50%),
+    linear-gradient(135deg, var(--text) 50%, transparent 50%);
+  background-position: right 12px center, right 6px center;
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px var(--surface);
+}
+
+select option {
+  background: var(--panel);
+  color: var(--text);
 }
 
 /* Make the editor feel app-like (no accidental text selection) */

@@ -28,6 +28,7 @@ type EditorContextValue = {
   history: History;
   checkpoint: () => void;
   setCanvasBackground: (bg: EditorDocument["canvasBackground"]) => void;
+  setCanvasSize: (size: EditorDocument["canvasSize"]) => void;
   preview: boolean;
   setPreview: (v: boolean) => void;
   setTool: (tool: ToolId) => void;
@@ -153,6 +154,7 @@ function initialDoc(): EditorDocument {
     tool: "select",
     viewport: { pan: { x: 120, y: 60 }, zoom: 1 },
     canvasBackground: { kind: "checkerboard" },
+    canvasSize: { width: 1440, height: 900 },
   };
 }
 
@@ -170,6 +172,16 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
 
   const setCanvasBackground = useCallback((bg: EditorDocument["canvasBackground"]) => {
     setDoc((d) => ({ ...d, canvasBackground: bg }));
+  }, []);
+
+  const setCanvasSize = useCallback((size: EditorDocument["canvasSize"]) => {
+    setDoc((d) => ({
+      ...d,
+      canvasSize: {
+        width: Math.max(1, Math.round(size.width)),
+        height: Math.max(1, Math.round(size.height)),
+      },
+    }));
   }, []);
 
   const commit = useCallback(
@@ -436,6 +448,7 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       history,
       checkpoint,
       setCanvasBackground,
+      setCanvasSize,
       preview,
       setPreview,
       setTool,
@@ -467,6 +480,7 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       history,
       checkpoint,
       setCanvasBackground,
+      setCanvasSize,
       preview,
       setPreview,
       setTool,
