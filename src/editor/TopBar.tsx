@@ -18,7 +18,6 @@ import {
 import { useEditor } from "../state/editorStore";
 import { ToolId } from "../state/types";
 import { useTheme } from "../state/themeStore";
-import { createPortal } from "react-dom";
 
 const toolIcons: Record<ToolId, React.ReactNode> = {
   select: <MousePointer2 size={16} />,
@@ -175,126 +174,98 @@ export function TopBar() {
         </div>
       </div>
 
-      {supportOpen &&
-        createPortal(
+      {supportOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.55)",
+            display: "grid",
+            placeItems: "center",
+            zIndex: 20,
+            padding: 16,
+          }}
+        >
           <div
-            onClick={() => setSupportOpen(false)}
             style={{
-              position: "fixed",
-              inset: 0,
-              background: "rgba(0,0,0,0.55)",
-              display: "grid",
-              placeItems: "center",
-              zIndex: 9999,
-              padding: 16,
+              maxWidth: 560,
+              width: "100%",
+              background: "var(--panel-strong)",
+              border: "1px solid var(--border-strong)",
+              borderRadius: 16,
+              boxShadow: "0 20px 80px rgba(0,0,0,0.35)",
+              padding: 20,
+              color: "var(--text)",
             }}
           >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                position: "relative",
-                maxWidth: 560,
-                width: "100%",
-                background: "var(--panel-strong)",
-                border: "1px solid var(--border-strong)",
-                borderRadius: 16,
-                boxShadow: "0 20px 80px rgba(0,0,0,0.45)",
-                padding: 20,
-                color: "var(--text)",
-              }}
-            >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <div
+                style={{
+                  height: 40,
+                  width: 40,
+                  borderRadius: 12,
+                  background: "linear-gradient(135deg,var(--badge-from),var(--badge-to))",
+                  display: "grid",
+                  placeItems: "center",
+                  color: "var(--badge-text)",
+                  fontWeight: 800,
+                }}
+              >
+                ❤
+              </div>
+              <div>
+                <div style={{ fontWeight: 700 }}>Support the Future of Vector Studio</div>
+                <div style={{ fontSize: 12, opacity: 0.8 }}>Every donation keeps Netherlabs open and accessible.</div>
+              </div>
+            </div>
+
+            {["We’re passionate about continuously improving Vector Studio and building tools that are accessible to everyone. Netherlabs is an open-source startup, and our mission is simple: all of our apps — including Vector Studio — will remain free to use, without paywalls or locked features.",
+            "Your donation directly supports ongoing development and helps us maintain the servers and infrastructure that keep everything running smoothly. As the platform grows, we plan to use advanced databases and services that come with significant costs, but we are committed to never restricting core functionality behind payments.",
+            "The only optional paid features we may introduce in the future are things like extended storage, profile cosmetics, and themes — never essential tools.",
+            "If you believe in open software, transparency, and building powerful tools for everyone, your support truly makes a difference. ❤️"].map((p, idx) => (
+              <p key={idx} style={{ margin: "0 0 10px", lineHeight: 1.6, color: "var(--text)" }}>
+                {p}
+              </p>
+            ))}
+
+            <div style={{ display: "flex", gap: 10, marginTop: 16, justifyContent: "flex-end", alignItems: "center" }}>
               <button
                 onClick={() => setSupportOpen(false)}
-                aria-label="Close donation dialog"
                 style={{
-                  position: "absolute",
-                  top: 12,
-                  right: 12,
-                  height: 32,
-                  width: 32,
-                  borderRadius: 8,
+                  height: 36,
+                  padding: "0 12px",
+                  borderRadius: 10,
                   border: "1px solid var(--border)",
                   background: "var(--control)",
                   color: "var(--text)",
                   cursor: "pointer",
-                  display: "grid",
+                }}
+              >
+                Close
+              </button>
+              <a
+                href="https://paypal.me/netherlabsfonds"
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  height: 36,
+                  padding: "0 14px",
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "linear-gradient(135deg,var(--accent),var(--accent-strong))",
+                  color: "#ffffff",
+                  fontWeight: 700,
+                  textDecoration: "none",
+                  display: "inline-grid",
                   placeItems: "center",
                 }}
               >
-                <X size={16} />
-              </button>
-
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                <div
-                  style={{
-                    height: 40,
-                    width: 40,
-                    borderRadius: 12,
-                    background: "linear-gradient(135deg,var(--badge-from),var(--badge-to))",
-                    display: "grid",
-                    placeItems: "center",
-                    color: "var(--badge-text)",
-                    fontWeight: 800,
-                  }}
-                >
-                  ❤
-                </div>
-                <div>
-                  <div style={{ fontWeight: 700 }}>Support the Future of Vector Studio</div>
-                  <div style={{ fontSize: 12, opacity: 0.8 }}>Every donation keeps Netherlabs open and accessible.</div>
-                </div>
-              </div>
-
-              {[
-                "We’re passionate about continuously improving Vector Studio and building tools that are accessible to everyone. Netherlabs is an open-source startup, and our mission is simple: all of our apps — including Vector Studio — will remain free to use, without paywalls or locked features.",
-                "Your donation directly supports ongoing development and helps us maintain the servers and infrastructure that keep everything running smoothly. As the platform grows, we plan to use advanced databases and services that come with significant costs, but we are committed to never restricting core functionality behind payments.",
-                "The only optional paid features we may introduce in the future are things like extended storage, profile cosmetics, and themes — never essential tools.",
-                "If you believe in open software, transparency, and building powerful tools for everyone, your support truly makes a difference. ❤️",
-              ].map((p, idx) => (
-                <p key={idx} style={{ margin: "0 0 10px", lineHeight: 1.6, color: "var(--text)" }}>
-                  {p}
-                </p>
-              ))}
-
-              <div style={{ display: "flex", gap: 10, marginTop: 16, justifyContent: "flex-end", alignItems: "center" }}>
-                <button
-                  onClick={() => setSupportOpen(false)}
-                  style={{
-                    height: 36,
-                    padding: "0 12px",
-                    borderRadius: 10,
-                    border: "1px solid var(--border)",
-                    background: "var(--control)",
-                    color: "var(--text)",
-                    cursor: "pointer",
-                  }}
-                >
-                  Close
-                </button>
-                <a
-                  href="https://paypal.me/netherlabsfonds"
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{
-                    height: 36,
-                    padding: "0 14px",
-                    borderRadius: 10,
-                    border: "1px solid var(--border)",
-                    background: "linear-gradient(135deg,var(--accent),var(--accent-strong))",
-                    color: "#ffffff",
-                    fontWeight: 700,
-                    textDecoration: "none",
-                    display: "inline-grid",
-                    placeItems: "center",
-                  }}
-                >
-                  Donate via PayPal
-                </a>
-              </div>
+                Donate via PayPal
+              </a>
             </div>
-          </div>,
-          document.body
-        )}
+          </div>
+        </div>
+      )}
     </header>
   );
 }
