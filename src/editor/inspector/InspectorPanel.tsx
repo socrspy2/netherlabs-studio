@@ -3,11 +3,12 @@ import { useEditor } from "../../state/editorStore";
 import { Shape, TextShape } from "../../state/types";
 
 export function InspectorPanel() {
-  const { doc, setCanvasBackground } = useEditor();
+  const { doc, setCanvasBackground, setCanvasSize } = useEditor();
   const selected = doc.selection[0];
   const flat = React.useMemo(() => flatten(doc.layers), [doc.layers]);
   const node = flat.find((n) => n.kind === "shape" && n.id === selected) as any;
   const shape: Shape | null = node?.shape ?? null;
+  const canvasSize = doc.canvasSize ?? { width: 1800, height: 1200 };
   const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({
     export: true,
   });
@@ -75,6 +76,41 @@ export function InspectorPanel() {
           </label>
         </div>
         <div style={{ fontSize: 11, opacity: 0.65 }}>Canvas background is for editing only (not export).</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <LabeledSizeInput
+              label="Width"
+              value={canvasSize.width}
+              onChange={(next) => setCanvasSize({ ...canvasSize, width: next })}
+            />
+            <LabeledSizeInput
+              label="Height"
+              value={canvasSize.height}
+              onChange={(next) => setCanvasSize({ ...canvasSize, height: next })}
+            />
+            <div style={{ fontSize: 11, opacity: 0.65 }}>px</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {[{ label: "Web", width: 1440, height: 900 }, { label: "Tablet", width: 1024, height: 768 }, { label: "Phone", width: 390, height: 844 }].map((t) => (
+              <button
+                key={t.label}
+                onClick={() => setCanvasSize({ width: t.width, height: t.height })}
+                style={{
+                  height: 32,
+                  padding: "0 10px",
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "var(--control)",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+              >
+                {t.label} {t.width}×{t.height}
+              </button>
+            ))}
+          </div>
+        </div>
       </Section>
 
       {shape && (
@@ -294,6 +330,25 @@ function Grid({ children }: { children: React.ReactNode }) {
   return <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>{children}</div>;
 }
 
+function LabeledSizeInput({ label, value, onChange }: { label: string; value: number; onChange: (next: number) => void }) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, minWidth: 120 }}>
+      <span style={{ opacity: 0.7 }}>{label}</span>
+      <input
+        type="number"
+        min={1}
+        value={value}
+        onChange={(e) => {
+          const parsed = Number(e.target.value);
+          if (!Number.isFinite(parsed)) return;
+          onChange(Math.max(1, parsed));
+        }}
+        style={inputStyle}
+      />
+    </label>
+  );
+}
+
 function LabeledInput({
   label,
   value,
@@ -434,14 +489,8 @@ function SelectRow({
             return applyPath(prev, field, nextValue);
           })
         }
-        style={{
-          height: 32,
-          borderRadius: 8,
-          border: "1px solid var(--border)",
-          background: "var(--control)",
-          color: "var(--text)",
-          padding: "0 8px",
-        }}
+        className="themed-select"
+        style={{ height: 32 }}
       >
         {options.map((opt) => (
           <option key={opt} value={opt}>

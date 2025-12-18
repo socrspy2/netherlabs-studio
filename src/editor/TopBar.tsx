@@ -118,13 +118,10 @@ export function TopBar() {
           <select
             value={themeId}
             onChange={(e) => setThemeId(e.target.value as any)}
+            className="themed-select"
             style={{
               height: 32,
-              borderRadius: 10,
-              border: "1px solid var(--border)",
-              background: "var(--control)",
-              color: "var(--text)",
-              padding: "0 10px",
+              minWidth: 140,
             }}
           >
             {options.map((opt) => (
