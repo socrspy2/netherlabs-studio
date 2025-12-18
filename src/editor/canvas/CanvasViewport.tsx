@@ -575,13 +575,13 @@ export function CanvasViewport() {
   const paperBackground = getCanvasPaperStyle(doc.canvasBackground);
 
   return (
-    <div style={{ position: "relative", minHeight: 0, height: "100%", background: "#0b1224", display: "flex", flexDirection: "column" }}>
+    <div style={{ position: "relative", minHeight: 0, height: "100%", background: "var(--canvas)", display: "flex", flexDirection: "column" }}>
       <div style={{ padding: 12, display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.03)", padding: "6px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.06)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--control)", padding: "6px 10px", borderRadius: 10, border: "1px solid var(--border)" }}>
           <Ruler size={14} />
           <span style={{ fontSize: 12, opacity: 0.8 }}>Snap 10px grid</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.03)", padding: "6px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.06)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--control)", padding: "6px 10px", borderRadius: 10, border: "1px solid var(--border)" }}>
           <Sparkle size={14} />
           <span style={{ fontSize: 12, opacity: 0.8 }}>Smart select & handles</span>
         </div>
@@ -592,10 +592,10 @@ export function CanvasViewport() {
         style={{
           position: "relative",
           overflow: "hidden",
-          background: "#0b1224",
+          background: "var(--canvas)",
           borderRadius: 16,
           margin: 12,
-          border: "1px solid rgba(255,255,255,0.05)",
+          border: "1px solid var(--border)",
           minHeight: 0,
           flex: 1,
           touchAction: "none",
@@ -651,8 +651,8 @@ export function CanvasViewport() {
             <svg width={1800} height={1200} style={{ overflow: "visible" }}>
               <defs>
                 <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                  <rect width="40" height="40" fill="none" stroke="rgba(255,255,255,0.03)" strokeWidth="1" />
-                  <rect width="10" height="10" fill="none" stroke="rgba(255,255,255,0.02)" strokeWidth="0.5" />
+                  <rect width="40" height="40" fill="none" stroke="var(--border)" strokeWidth="1" opacity={0.3} />
+                  <rect width="10" height="10" fill="none" stroke="var(--border)" strokeWidth="0.5" opacity={0.18} />
                 </pattern>
               </defs>
               <rect width="1800" height="1200" fill="url(#grid)" />
@@ -663,12 +663,13 @@ export function CanvasViewport() {
                   <path
                     d={pathFromDraft(penDraft.points)}
                     fill="none"
-                    stroke="rgba(56,189,248,0.85)"
+                    stroke="var(--accent)"
+                    strokeOpacity={0.85}
                     strokeWidth={2}
                     strokeDasharray="6 4"
                   />
                   {penDraft.points.map((p, idx) => (
-                    <circle key={idx} cx={p.x} cy={p.y} r={4} fill="#38bdf8" stroke="#0f172a" strokeWidth={1} />
+                    <circle key={idx} cx={p.x} cy={p.y} r={4} fill="var(--accent)" stroke="var(--bg)" strokeWidth={1} />
                   ))}
                 </>
               ) : null}
@@ -678,8 +679,8 @@ export function CanvasViewport() {
                   y={Math.min(marquee.y, marquee.y + marquee.h)}
                   width={Math.abs(marquee.w)}
                   height={Math.abs(marquee.h)}
-                  fill="rgba(59,130,246,0.12)"
-                  stroke="rgba(59,130,246,0.8)"
+                  fill="var(--selection)"
+                  stroke="var(--accent)"
                   strokeDasharray="6 4"
                 />
               )}
@@ -763,15 +764,16 @@ export function CanvasViewport() {
                               y1={selectedPath.y + pt.y}
                               x2={selectedPath.x + pt.in.x}
                               y2={selectedPath.y + pt.in.y}
-                              stroke="rgba(148,163,184,0.65)"
+                              stroke="var(--accent-strong)"
+                              strokeOpacity={0.65}
                               strokeWidth={1.5}
                             />
                             <circle
                               cx={selectedPath.x + pt.in.x}
                               cy={selectedPath.y + pt.in.y}
                               r={4}
-                              fill="#94a3b8"
-                              stroke="#0f172a"
+                              fill="var(--text-muted)"
+                              stroke="var(--bg)"
                               strokeWidth={2}
                               style={{ pointerEvents: "all" }}
                               onPointerDown={(e) => {
@@ -798,15 +800,16 @@ export function CanvasViewport() {
                               y1={selectedPath.y + pt.y}
                               x2={selectedPath.x + pt.out.x}
                               y2={selectedPath.y + pt.out.y}
-                              stroke="rgba(148,163,184,0.65)"
+                              stroke="var(--accent-strong)"
+                              strokeOpacity={0.65}
                               strokeWidth={1.5}
                             />
                             <circle
                               cx={selectedPath.x + pt.out.x}
                               cy={selectedPath.y + pt.out.y}
                               r={4}
-                              fill="#94a3b8"
-                              stroke="#0f172a"
+                              fill="var(--text-muted)"
+                              stroke="var(--bg)"
                               strokeWidth={2}
                               style={{ pointerEvents: "all" }}
                               onPointerDown={(e) => {
@@ -830,8 +833,8 @@ export function CanvasViewport() {
                           cx={selectedPath.x + pt.x}
                           cy={selectedPath.y + pt.y}
                           r={5}
-                          fill="#e2e8f0"
-                          stroke="#0f172a"
+                          fill="var(--accent)"
+                          stroke="var(--bg)"
                           strokeWidth={2}
                           style={{ pointerEvents: "all" }}
                           onPointerDown={(e) => {
@@ -865,15 +868,16 @@ export function CanvasViewport() {
 
 function PreviewShapeOutline({ shape }: { shape: Shape }) {
   return (
-    <rect
-      x={shape.x}
-      y={shape.y}
-      width={shape.width}
-      height={shape.height}
-      fill="none"
-      stroke="rgba(56,189,248,0.55)"
-      strokeDasharray="6 4"
-    />
+      <rect
+        x={shape.x}
+        y={shape.y}
+        width={shape.width}
+        height={shape.height}
+        fill="none"
+        stroke="var(--accent)"
+        strokeOpacity={0.7}
+        strokeDasharray="6 4"
+      />
   );
 }
 
@@ -894,8 +898,8 @@ function SelectionOutline({
       y={y}
       width={10}
       height={10}
-      fill="#38bdf8"
-      stroke="#0f172a"
+      fill="var(--accent)"
+      stroke="var(--bg)"
       strokeWidth={1}
       style={{ pointerEvents: "all" }}
       onPointerDown={(e) => {
@@ -913,7 +917,7 @@ function SelectionOutline({
         width={bounds.width}
         height={bounds.height}
         fill="none"
-        stroke="rgba(56,189,248,0.8)"
+        stroke="var(--accent)"
         strokeDasharray="6 4"
         style={{ pointerEvents: "all" }}
         onPointerDown={(e) => {
@@ -925,8 +929,8 @@ function SelectionOutline({
         cx={bounds.width / 2}
         cy={-24}
         r={6}
-        fill="#fbbf24"
-        stroke="#0f172a"
+        fill="var(--accent-strong)"
+        stroke="var(--bg)"
         strokeWidth={1}
         style={{ pointerEvents: "all" }}
         onPointerDown={(e) => {
@@ -989,18 +993,18 @@ function probeImageSize(src: string): Promise<{ width: number; height: number }>
 }
 
 function getCanvasPaperStyle(bg: any): React.CSSProperties {
-  if (!bg) return { background: "#0f172a" };
+  if (!bg) return { background: "var(--canvas)" };
   if (bg.kind === "preset") {
     if (bg.value === "white") return { background: "#ffffff" };
     if (bg.value === "black") return { background: "#0b0f1a" };
-    return { background: "#0b1224" };
+    return { background: "var(--canvas)" };
   }
   if (bg.kind === "custom") {
-    return { background: bg.color || "#0b1224" };
+    return { background: bg.color || "var(--canvas)" };
   }
   // checkerboard
   return {
-    backgroundColor: "#111827",
+    backgroundColor: "var(--panel-strong)",
     backgroundImage:
       "linear-gradient(45deg, rgba(255,255,255,0.06) 25%, transparent 25%)," +
       "linear-gradient(-45deg, rgba(255,255,255,0.06) 25%, transparent 25%)," +

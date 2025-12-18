@@ -1,13 +1,142 @@
 :root {
-  color-scheme: dark;
+  --color-scheme: dark;
+  --bg: #0f172a;
+  --panel: rgba(15, 23, 42, 0.9);
+  --panel-strong: rgba(10, 18, 32, 0.85);
+  --surface: rgba(255, 255, 255, 0.04);
+  --surface-subtle: rgba(255, 255, 255, 0.02);
+  --control: rgba(255, 255, 255, 0.06);
+  --control-strong: rgba(148, 163, 184, 0.18);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --text: #e2e8f0;
+  --text-muted: #cbd5e1;
+  --selection: rgba(148, 163, 184, 0.18);
+  --accent: #a855f7;
+  --accent-strong: #6366f1;
+  --badge-from: #c084fc;
+  --badge-to: #38bdf8;
+  --badge-text: #0f172a;
+  --canvas: #0b1224;
   font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: var(--color-scheme);
+}
+
+[data-theme="blue"] {
+  --color-scheme: dark;
+  --bg: #0a152b;
+  --panel: rgba(8, 26, 46, 0.92);
+  --panel-strong: rgba(6, 20, 36, 0.9);
+  --surface: rgba(255, 255, 255, 0.05);
+  --surface-subtle: rgba(255, 255, 255, 0.02);
+  --control: rgba(255, 255, 255, 0.07);
+  --control-strong: rgba(59, 130, 246, 0.2);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --text: #e5f2ff;
+  --text-muted: #c3d6f4;
+  --selection: rgba(59, 130, 246, 0.24);
+  --accent: #38bdf8;
+  --accent-strong: #0ea5e9;
+  --badge-from: #38bdf8;
+  --badge-to: #60a5fa;
+  --badge-text: #041122;
+  --canvas: #0b1729;
+}
+
+[data-theme="purple"] {
+  --color-scheme: dark;
+  --bg: #0f172a;
+  --panel: rgba(15, 23, 42, 0.9);
+  --panel-strong: rgba(10, 18, 32, 0.85);
+  --surface: rgba(255, 255, 255, 0.04);
+  --surface-subtle: rgba(255, 255, 255, 0.02);
+  --control: rgba(255, 255, 255, 0.06);
+  --control-strong: rgba(148, 163, 184, 0.18);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --text: #e2e8f0;
+  --text-muted: #cbd5e1;
+  --selection: rgba(168, 85, 247, 0.22);
+  --accent: #a855f7;
+  --accent-strong: #6366f1;
+  --badge-from: #c084fc;
+  --badge-to: #38bdf8;
+  --badge-text: #0f172a;
+  --canvas: #0b1224;
+}
+
+[data-theme="pink"] {
+  --color-scheme: dark;
+  --bg: #1a0f1f;
+  --panel: rgba(26, 12, 33, 0.92);
+  --panel-strong: rgba(22, 10, 28, 0.88);
+  --surface: rgba(255, 255, 255, 0.05);
+  --surface-subtle: rgba(255, 255, 255, 0.02);
+  --control: rgba(255, 255, 255, 0.08);
+  --control-strong: rgba(244, 114, 182, 0.22);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --text: #fde7f4;
+  --text-muted: #f9cfe7;
+  --selection: rgba(244, 114, 182, 0.28);
+  --accent: #f472b6;
+  --accent-strong: #f9a8d4;
+  --badge-from: #f9a8d4;
+  --badge-to: #a855f7;
+  --badge-text: #2d0e2d;
+  --canvas: #1b1224;
+}
+
+[data-theme="black"] {
+  --color-scheme: dark;
+  --bg: #060606;
+  --panel: rgba(12, 12, 12, 0.92);
+  --panel-strong: rgba(8, 8, 8, 0.9);
+  --surface: rgba(255, 255, 255, 0.03);
+  --surface-subtle: rgba(255, 255, 255, 0.015);
+  --control: rgba(255, 255, 255, 0.05);
+  --control-strong: rgba(255, 255, 255, 0.08);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --text: #f3f4f6;
+  --text-muted: #d1d5db;
+  --selection: rgba(255, 255, 255, 0.14);
+  --accent: #e5e7eb;
+  --accent-strong: #d1d5db;
+  --badge-from: #111827;
+  --badge-to: #1f2937;
+  --badge-text: #f8fafc;
+  --canvas: #0b0f1a;
+}
+
+[data-theme="white"] {
+  --color-scheme: light;
+  --bg: #f8fafc;
+  --panel: rgba(255, 255, 255, 0.95);
+  --panel-strong: #ffffff;
+  --surface: rgba(15, 23, 42, 0.03);
+  --surface-subtle: rgba(15, 23, 42, 0.015);
+  --control: #f8fafc;
+  --control-strong: #e2e8f0;
+  --border: rgba(15, 23, 42, 0.12);
+  --border-strong: rgba(15, 23, 42, 0.16);
+  --text: #0f172a;
+  --text-muted: #334155;
+  --selection: rgba(99, 102, 241, 0.14);
+  --accent: #6366f1;
+  --accent-strong: #7c3aed;
+  --badge-from: #6366f1;
+  --badge-to: #38bdf8;
+  --badge-text: #f8fafc;
+  --canvas: #ffffff;
 }
 
 html, body {
   margin: 0;
   padding: 0;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: var(--bg);
+  color: var(--text);
   height: 100%;
 }
 
