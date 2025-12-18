@@ -17,8 +17,8 @@ export function InspectorPanel() {
   return (
     <aside
       style={{
-        borderLeft: "1px solid rgba(255,255,255,0.08)",
-        background: "rgba(10,18,32,0.85)",
+        borderLeft: "1px solid var(--border)",
+        background: "var(--panel-strong)",
         backdropFilter: "blur(8px)",
         display: "flex",
         flexDirection: "column",
@@ -30,7 +30,7 @@ export function InspectorPanel() {
       }}
       onWheelCapture={(e) => e.stopPropagation()}
     >
-      <div style={{ fontWeight: 700, fontSize: 14 }}>Inspector</div>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>Inspector</div>
       {!shape && <div style={{ fontSize: 12, opacity: 0.7 }}>Select a layer to edit properties.</div>}
 
       <Section title="Canvas" open={!collapsed.canvas} onToggle={() => toggle("canvas")}>
@@ -48,9 +48,9 @@ export function InspectorPanel() {
                 height: 32,
                 padding: "0 10px",
                 borderRadius: 10,
-                border: "1px solid rgba(255,255,255,0.1)",
-                background: "rgba(255,255,255,0.06)",
-                color: "#e2e8f0",
+                border: "1px solid var(--border)",
+                background: "var(--control)",
+                color: "var(--text)",
                 cursor: "pointer",
                 fontSize: 12,
               }}
@@ -68,8 +68,8 @@ export function InspectorPanel() {
                 height: 32,
                 width: 44,
                 borderRadius: 10,
-                border: "1px solid rgba(255,255,255,0.1)",
-                background: "rgba(255,255,255,0.06)",
+                border: "1px solid var(--border)",
+                background: "var(--control)",
               }}
             />
           </label>
@@ -258,10 +258,10 @@ function Section({
   return (
     <div
       style={{
-        border: "1px solid rgba(255,255,255,0.08)",
+        border: "1px solid var(--border)",
         borderRadius: 12,
         padding: 10,
-        background: "rgba(255,255,255,0.02)",
+        background: "var(--surface-subtle)",
         display: "flex",
         flexDirection: "column",
         gap: 8,
@@ -272,9 +272,9 @@ function Section({
         style={{
           height: 28,
           borderRadius: 10,
-          border: "1px solid rgba(255,255,255,0.06)",
-          background: "rgba(255,255,255,0.03)",
-          color: "#e2e8f0",
+          border: "1px solid var(--border)",
+          background: "var(--control)",
+          color: "var(--text)",
           cursor: "pointer",
           textAlign: "left",
           padding: "0 10px",
@@ -373,9 +373,9 @@ function LabeledInput({
         style={{
           height: 32,
           borderRadius: 8,
-          border: "1px solid rgba(255,255,255,0.1)",
-          background: "rgba(255,255,255,0.06)",
-          color: "#e2e8f0",
+          border: "1px solid var(--border)",
+          background: "var(--control)",
+          color: "var(--text)",
           padding: "0 8px",
         }}
       />
@@ -437,9 +437,9 @@ function SelectRow({
         style={{
           height: 32,
           borderRadius: 8,
-          border: "1px solid rgba(255,255,255,0.1)",
-          background: "rgba(255,255,255,0.06)",
-          color: "#e2e8f0",
+          border: "1px solid var(--border)",
+          background: "var(--control)",
+          color: "var(--text)",
           padding: "0 8px",
         }}
       >
@@ -599,8 +599,8 @@ function GradientStopsEditor({ field, stops }: { field: string; stops: any[] }) 
 const inputStyle: React.CSSProperties = {
   height: 32,
   borderRadius: 8,
-  border: "1px solid rgba(255,255,255,0.1)",
-  background: "rgba(255,255,255,0.06)",
-  color: "#e2e8f0",
+  border: "1px solid var(--border)",
+  background: "var(--control)",
+  color: "var(--text)",
   padding: "0 8px",
 };
