@@ -62,6 +62,9 @@ If you want to help, feel free to open an issue, suggest features, submit a PR, 
 
 We’re building this in the open on purpose.
 
+PS: We do have a beautiful thanks.dev page and a paypal.me if you really want to show us your love.
+paypal.me/netherlabsfonds
+
 License 📄
 
 This project is open source.
