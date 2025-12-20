@@ -271,7 +271,7 @@ function buildShape(shape: Shape): PIXI.Container | null {
 function applyFilters(display: PIXI.Container, shape: Shape) {
   const blur = shape.effects?.blur ?? 0;
   if (blur > 0) {
-    display.filters = [new PIXI.BlurFilter({ strength: blur }) as any];
+    display.filters = [new PIXI.BlurFilter({ strength: blur, quality: 4, resolution: 1 }) as any];
   }
 }
 
@@ -385,6 +385,29 @@ function buildMaskGraphics(shape: Shape) {
   } else if (shape.type === "ellipse") {
     g.ellipse(shape.width / 2, shape.height / 2, shape.width / 2, shape.height / 2);
     g.fill(0xffffff);
+  } else if (shape.type === "path") {
+    const p = shape as PathShape;
+    if (p.points.length >= 2) {
+      g.moveTo(p.points[0].x, p.points[0].y);
+      const count = p.points.length;
+      const segCount = p.closed ? count : count - 1;
+      for (let i = 0; i < segCount; i++) {
+        const a = p.points[i];
+        const b = p.points[(i + 1) % count];
+        const c1 = a.out ?? { x: a.x, y: a.y };
+        const c2 = b.in ?? { x: b.x, y: b.y };
+        const isCurve =
+          (a.out && (a.out.x !== a.x || a.out.y !== a.y)) ||
+          (b.in && (b.in.x !== b.x || b.in.y !== b.y));
+        if (isCurve) {
+          g.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y);
+        } else {
+          g.lineTo(b.x, b.y);
+        }
+      }
+      if (p.closed) g.closePath();
+      g.fill(0xffffff);
+    }
   } else {
     // lines/text: no meaningful mask
     g.rect(0, 0, shape.width, shape.height);

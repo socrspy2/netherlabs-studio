@@ -1,8 +1,15 @@
 export type ToolId =
   | "select"
+  | "direction"
   | "frame"
   | "rectangle"
   | "ellipse"
+  | "triangle"
+  | "trapezoid"
+  | "star"
+  | "polygon"
+  | "wave"
+  | "arrow"
   | "line"
   | "text"
   | "pen"
@@ -139,6 +146,7 @@ export type PathPoint = {
   y: number;
   in?: BezierHandle | null;
   out?: BezierHandle | null;
+  pointType?: "corner" | "smooth" | "broken";
 };
 
 export type PathShape = BaseShape & {

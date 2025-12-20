@@ -1,10 +1,17 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   MousePointer2,
+  MousePointer,
   Frame,
   Square,
   Circle,
+  Triangle,
+  Pentagon,
+  Star,
+  Hexagon,
+  Waves,
+  ArrowRight,
   Minus,
   Type,
   PenTool,
@@ -22,9 +29,16 @@ import { useTheme } from "../state/themeStore";
 
 const toolIcons: Record<ToolId, React.ReactNode> = {
   select: <MousePointer2 size={16} />,
+  direction: <MousePointer size={16} />,
   frame: <Frame size={16} />,
   rectangle: <Square size={16} />,
   ellipse: <Circle size={16} />,
+  triangle: <Triangle size={16} />,
+  trapezoid: <Pentagon size={16} />,
+  star: <Star size={16} />,
+  polygon: <Hexagon size={16} />,
+  wave: <Waves size={16} />,
+  arrow: <ArrowRight size={16} />,
   line: <Minus size={16} />,
   text: <Type size={16} />,
   pen: <PenTool size={16} />,
@@ -32,12 +46,35 @@ const toolIcons: Record<ToolId, React.ReactNode> = {
   zoom: <ZoomIn size={16} />,
 };
 
-const toolOrder: ToolId[] = ["select", "frame", "rectangle", "ellipse", "line", "text", "pen", "hand", "zoom"];
+const toolOrder: ToolId[] = ["select", "direction", "frame", "line", "text", "pen", "hand", "zoom"];
 
 export function TopBar() {
   const { doc, setTool, undo, redo, preview, setPreview } = useEditor();
   const { themeId, setThemeId, options } = useTheme();
-  const [supportOpen, setSupportOpen] = React.useState(false);
+  const [supportOpen, setSupportOpen] = useState(false);
+  const [shapeOpen, setShapeOpen] = useState(false);
+  const shapeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const shapeMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setShapeOpen(false);
+      }
+    };
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (shapeOpen && !shapeButtonRef.current?.contains(target) && !shapeMenuRef.current?.contains(target)) {
+        setShapeOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onClick);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onClick);
+    };
+  }, [shapeOpen]);
 
   React.useEffect(() => {
     if (!supportOpen) return;
@@ -63,6 +100,8 @@ export function TopBar() {
         padding: "0 16px",
         background: "var(--panel)",
         backdropFilter: "blur(10px)",
+        position: "relative",
+        zIndex: 5000,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 220 }}>
@@ -86,7 +125,81 @@ export function TopBar() {
         </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 20, position: "relative" }}>
+        <button
+          ref={shapeButtonRef}
+          onClick={() => setShapeOpen((v) => !v)}
+          style={{
+            height: 34,
+            minWidth: 48,
+            padding: "0 12px",
+            borderRadius: 10,
+            background: doc.tool === "rectangle" || doc.tool === "ellipse" ? "var(--selection)" : "transparent",
+            border: "1px solid var(--border)",
+            color: "var(--text)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            cursor: "pointer",
+          }}
+          title="Shape"
+        >
+          <Square size={16} />
+          <span style={{ fontSize: 12 }}>Shape</span>
+        </button>
+        {shapeOpen && (
+          <div
+            ref={shapeMenuRef}
+            style={{
+              position: "absolute",
+              top: 42,
+              left: 0,
+              background: "var(--panel-strong)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              boxShadow: "0 10px 40px rgba(0,0,0,0.28)",
+              padding: 6,
+              minWidth: 140,
+              zIndex: 2000,
+            }}
+          >
+            {[
+              { id: "rectangle", label: "Rectangle", icon: <Square size={14} /> },
+              { id: "ellipse", label: "Ellipse", icon: <Circle size={14} /> },
+              { id: "triangle", label: "Triangle", icon: <Triangle size={14} /> },
+              { id: "trapezoid", label: "Trapezoid", icon: <Pentagon size={14} /> },
+              { id: "star", label: "Star", icon: <Star size={14} /> },
+              { id: "polygon", label: "Polygon", icon: <Hexagon size={14} /> },
+              { id: "wave", label: "Wave", icon: <Waves size={14} /> },
+              { id: "arrow", label: "Arrow", icon: <ArrowRight size={14} /> },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() => {
+                  setTool(opt.id as ToolId);
+                  setShapeOpen(false);
+                }}
+                style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "8px 10px",
+                  background: doc.tool === opt.id ? "var(--selection)" : "transparent",
+                  color: "var(--text)",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  textAlign: "left",
+                }}
+              >
+                {opt.icon}
+                <span style={{ fontSize: 12 }}>{opt.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {toolOrder.map((tool) => (
           <button
             key={tool}

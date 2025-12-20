@@ -521,10 +521,23 @@ export function useEditor() {
 export function createShapeForTool(tool: ToolId, at: { x: number; y: number }): Shape {
   switch (tool) {
     case "rectangle":
+      return createRectPath(at.x, at.y, 160, 120);
     case "frame":
       return baseShape("rectangle", "Rectangle", at.x, at.y);
     case "ellipse":
-      return baseShape("ellipse", "Ellipse", at.x, at.y);
+      return createEllipsePath(at.x, at.y, 160, 120);
+    case "triangle":
+      return createTrianglePath(at.x, at.y, 180, 150);
+    case "trapezoid":
+      return createTrapezoidPath(at.x, at.y, 200, 140);
+    case "star":
+      return createStarPath(at.x, at.y, 180, 180, 5, 0.45);
+    case "polygon":
+      return createPolygonPath(at.x, at.y, 200, 200, 6, 12);
+    case "wave":
+      return createWavePath(at.x, at.y, 220, 140, 3);
+    case "arrow":
+      return createArrowPath(at.x, at.y, 220, 140);
     case "line":
       return baseShape("line", "Line", at.x, at.y);
     case "text":
@@ -532,4 +545,261 @@ export function createShapeForTool(tool: ToolId, at: { x: number; y: number }): 
     default:
       return baseShape("rectangle", "Rectangle", at.x, at.y);
   }
+}
+
+function createRectPath(x: number, y: number, width: number, height: number): Shape {
+  const shape = baseShape("path", "Rectangle", x, y) as any as Shape & { points: any[]; closed: boolean };
+  shape.width = width;
+  shape.height = height;
+  shape.points = [
+    { x: 0, y: 0, in: null, out: null, pointType: "corner" },
+    { x: width, y: 0, in: null, out: null, pointType: "corner" },
+    { x: width, y: height, in: null, out: null, pointType: "corner" },
+    { x: 0, y: height, in: null, out: null, pointType: "corner" },
+  ];
+  shape.closed = true;
+  return shape;
+}
+
+function createEllipsePath(x: number, y: number, width: number, height: number): Shape {
+  const shape = baseShape("path", "Ellipse", x, y) as any as Shape & { points: any[]; closed: boolean };
+  shape.width = width;
+  shape.height = height;
+  const rx = width / 2;
+  const ry = height / 2;
+  const cx = rx;
+  const cy = ry;
+  const k = 0.5522847498;
+  shape.points = [
+    {
+      x: cx + rx,
+      y: cy,
+      in: { x: cx + rx, y: cy - ry * k },
+      out: { x: cx + rx, y: cy + ry * k },
+      pointType: "smooth",
+    },
+    {
+      x: cx,
+      y: cy + ry,
+      in: { x: cx + rx * k, y: cy + ry },
+      out: { x: cx - rx * k, y: cy + ry },
+      pointType: "smooth",
+    },
+    {
+      x: cx - rx,
+      y: cy,
+      in: { x: cx - rx, y: cy + ry * k },
+      out: { x: cx - rx, y: cy - ry * k },
+      pointType: "smooth",
+    },
+    {
+      x: cx,
+      y: cy - ry,
+      in: { x: cx - rx * k, y: cy - ry },
+      out: { x: cx + rx * k, y: cy - ry },
+      pointType: "smooth",
+    },
+  ];
+  shape.closed = true;
+  return shape;
+}
+
+function createTrianglePath(x: number, y: number, width: number, height: number): Shape {
+  const shape = baseShape("path", "Triangle", x, y) as any as Shape & { points: any[]; closed: boolean };
+  shape.width = width;
+  shape.height = height;
+  shape.points = [
+    { x: width / 2, y: 0, in: null, out: null, pointType: "corner" },
+    { x: width, y: height, in: null, out: null, pointType: "corner" },
+    { x: 0, y: height, in: null, out: null, pointType: "corner" },
+  ];
+  shape.closed = true;
+  return shape;
+}
+
+function createTrapezoidPath(x: number, y: number, width: number, height: number): Shape {
+  const shape = baseShape("path", "Trapezoid", x, y) as any as Shape & { points: any[]; closed: boolean };
+  shape.width = width;
+  shape.height = height;
+  const inset = width * 0.2;
+  shape.points = [
+    { x: inset, y: 0, in: null, out: null, pointType: "corner" },
+    { x: width - inset, y: 0, in: null, out: null, pointType: "corner" },
+    { x: width, y: height, in: null, out: null, pointType: "corner" },
+    { x: 0, y: height, in: null, out: null, pointType: "corner" },
+  ];
+  shape.closed = true;
+  return shape;
+}
+
+function createStarPath(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  pointsCount: number,
+  innerRatio: number
+): Shape {
+  const shape = baseShape("path", "Star", x, y) as any as Shape & { points: any[]; closed: boolean };
+  shape.width = width;
+  shape.height = height;
+  const cx = width / 2;
+  const cy = height / 2;
+  const outerR = Math.min(width, height) / 2;
+  const innerR = outerR * innerRatio;
+  const pts: any[] = [];
+  for (let i = 0; i < pointsCount * 2; i++) {
+    const r = i % 2 === 0 ? outerR : innerR;
+    const angle = (Math.PI * i) / pointsCount - Math.PI / 2;
+    const px = cx + r * Math.cos(angle);
+    const py = cy + r * Math.sin(angle);
+    pts.push({ x: px, y: py, in: null, out: null, pointType: "corner" });
+  }
+  shape.points = pts;
+  shape.closed = true;
+  return shape;
+}
+
+function createPolygonPath(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  sides: number,
+  cornerRadius: number
+): Shape {
+  const shape = baseShape("path", "Polygon", x, y) as any as Shape & { points: any[]; closed: boolean };
+  const n = Math.max(3, Math.floor(sides));
+  const w = width;
+  const h = height;
+  shape.width = w;
+  shape.height = h;
+  const cx = w / 2;
+  const cy = h / 2;
+  const r = Math.min(w, h) / 2;
+  const radius = Math.min(cornerRadius, r * 0.6);
+  const pts: any[] = [];
+
+  const getPoint = (angle: number) => ({
+    x: cx + r * Math.cos(angle),
+    y: cy + r * Math.sin(angle),
+  });
+
+  for (let i = 0; i < n; i++) {
+    const a0 = ((i - 1 + n) % n) * ((Math.PI * 2) / n) - Math.PI / 2;
+    const a1 = i * ((Math.PI * 2) / n) - Math.PI / 2;
+    const a2 = ((i + 1) % n) * ((Math.PI * 2) / n) - Math.PI / 2;
+    const p1 = getPoint(a0);
+    const p = getPoint(a1);
+    const p2 = getPoint(a2);
+
+    const v1 = normalize({ x: p.x - p1.x, y: p.y - p1.y });
+    const v2 = normalize({ x: p.x - p2.x, y: p.y - p2.y });
+    const inset = Math.min(radius, dist(p, p1) * 0.45, dist(p, p2) * 0.45);
+
+    const start = { x: p.x - v1.x * inset, y: p.y - v1.y * inset };
+    const end = { x: p.x - v2.x * inset, y: p.y - v2.y * inset };
+    const handle = inset * 0.5522847498;
+
+    const out = { x: start.x - v1.x * handle, y: start.y - v1.y * handle };
+    const inn = { x: end.x - v2.x * handle, y: end.y - v2.y * handle };
+
+    pts.push({
+      x: start.x,
+      y: start.y,
+      out,
+      in: null,
+      pointType: radius > 0 ? "smooth" : "corner",
+    });
+    pts.push({
+      x: end.x,
+      y: end.y,
+      in: inn,
+      out: null,
+      pointType: radius > 0 ? "smooth" : "corner",
+    });
+  }
+
+  shape.points = pts;
+  shape.closed = true;
+  return shape;
+}
+
+function createWavePath(x: number, y: number, width: number, height: number, waves: number): Shape {
+  const shape = baseShape("path", "Wave", x, y) as any as Shape & { points: any[]; closed: boolean };
+  const w = width;
+  const h = height;
+  shape.width = w;
+  shape.height = h;
+
+  const pts: any[] = [];
+  const amplitude = h / 4;
+  const baseY = h / 2;
+  const segments = Math.max(1, waves);
+  const step = w / segments;
+
+  pts.push({ x: 0, y: baseY, in: null, out: null, pointType: "smooth" });
+  for (let i = 0; i < segments; i++) {
+    const xMid = step * (i + 0.5);
+    const xNext = step * (i + 1);
+    const yPeak = baseY + (i % 2 === 0 ? -amplitude : amplitude);
+
+    const prev = pts[pts.length - 1];
+    const ctrlIn = { x: xMid - step * 0.25, y: prev.y };
+    const ctrlOut = { x: xMid + step * 0.25, y: yPeak };
+
+    pts.push({
+      x: xMid,
+      y: yPeak,
+      in: ctrlIn,
+      out: ctrlOut,
+      pointType: "smooth",
+    });
+
+    const nextCtrlIn = { x: xNext - step * 0.25, y: yPeak };
+    const nextCtrlOut = { x: xNext - step * 0.05, y: baseY };
+    pts.push({
+      x: xNext,
+      y: baseY,
+      in: nextCtrlIn,
+      out: nextCtrlOut,
+      pointType: "smooth",
+    });
+  }
+
+  shape.points = pts;
+  shape.closed = false;
+  return shape;
+}
+
+function createArrowPath(x: number, y: number, width: number, height: number): Shape {
+  const shape = baseShape("path", "Arrow", x, y) as any as Shape & { points: any[]; closed: boolean };
+  const w = width;
+  const h = height;
+  shape.width = w;
+  shape.height = h;
+  const shaftH = h * 0.4;
+  const headW = w * 0.35;
+  const cy = h / 2;
+  const pts = [
+    { x: 0, y: cy - shaftH / 2 },
+    { x: w - headW, y: cy - shaftH / 2 },
+    { x: w - headW, y: cy - shaftH },
+    { x: w, y: cy },
+    { x: w - headW, y: cy + shaftH },
+    { x: w - headW, y: cy + shaftH / 2 },
+    { x: 0, y: cy + shaftH / 2 },
+  ].map((p) => ({ ...p, in: null, out: null, pointType: "corner" as const }));
+  shape.points = pts;
+  shape.closed = true;
+  return shape;
+}
+
+function normalize(v: { x: number; y: number }) {
+  const m = Math.hypot(v.x, v.y) || 1;
+  return { x: v.x / m, y: v.y / m };
+}
+
+function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
