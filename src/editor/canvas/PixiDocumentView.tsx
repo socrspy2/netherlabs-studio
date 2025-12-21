@@ -393,7 +393,10 @@ function applyTransform(display: PIXI.Container, shape: Shape) {
 }
 
 function deriveMatrix(shape: Shape) {
-  const base = shape.matrix ? new DOMMatrix(shape.matrix) : new DOMMatrix().rotate(shape.rotation ?? 0);
+  // Use fromMatrix to satisfy DOMMatrix ctor typing (string | number[]) while accepting stored DOMMatrix values
+  const base = shape.matrix
+    ? DOMMatrix.fromMatrix(shape.matrix as DOMMatrixInit)
+    : new DOMMatrix().rotate(shape.rotation ?? 0);
   base.e = shape.x;
   base.f = shape.y;
   return base;
