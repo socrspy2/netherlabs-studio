@@ -1,9 +1,11 @@
 import React from "react";
 import { useEditor } from "../../state/editorStore";
-import { Shape, TextShape } from "../../state/types";
+import { Shape, TextShape, SolidFill, LinearGradientFill, ImageShape } from "../../state/types";
+import { useAssetActions } from "../useAssetActions";
 
 export function InspectorPanel() {
-  const { doc, setCanvasBackground, setCanvasSize } = useEditor();
+  const { doc, setCanvasBackground, setCanvasSize, updateShapeProps } = useEditor();
+  const assetActions = useAssetActions();
   const selected = doc.selection[0];
   const flat = React.useMemo(() => flatten(doc.layers), [doc.layers]);
   const node = flat.find((n) => n.kind === "shape" && n.id === selected) as any;
@@ -17,6 +19,50 @@ export function InspectorPanel() {
   const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({
     export: true,
   });
+
+  const addBitmapMask = React.useCallback(() => {
+    if (!shape || shape.type !== "image") return;
+    updateShapeProps(shape.id, (prev) => {
+      if ((prev as any).type !== "image") return prev;
+      const masks = Array.from((prev as any).masks ?? []);
+      masks.push({
+        id: crypto.randomUUID(),
+        kind: "bitmap",
+        name: "Bitmap mask",
+        visible: true,
+        inverted: false,
+      });
+      return { ...(prev as any), masks };
+    });
+  }, [shape, updateShapeProps]);
+
+  const toggleMaskVisibility = React.useCallback(
+    (maskId: string) => {
+      if (!shape || shape.type !== "image") return;
+      updateShapeProps(shape.id, (prev) => {
+        if ((prev as any).type !== "image") return prev;
+        const masks = Array.from((prev as any).masks ?? []).map((m: any) =>
+          m.id === maskId ? { ...m, visible: m.visible === false ? true : !m.visible } : m
+        );
+        return { ...(prev as any), masks };
+      });
+    },
+    [shape, updateShapeProps]
+  );
+
+  const toggleMaskInvert = React.useCallback(
+    (maskId: string) => {
+      if (!shape || shape.type !== "image") return;
+      updateShapeProps(shape.id, (prev) => {
+        if ((prev as any).type !== "image") return prev;
+        const masks = Array.from((prev as any).masks ?? []).map((m: any) =>
+          m.id === maskId ? { ...m, inverted: m.inverted ? false : true } : m
+        );
+        return { ...(prev as any), masks };
+      });
+    },
+    [shape, updateShapeProps]
+  );
 
   const toggle = (id: string) => setCollapsed((s) => ({ ...s, [id]: !s[id] }));
   const toggleSectionVisibility = (id: string) => {
@@ -41,6 +87,7 @@ export function InspectorPanel() {
       { id: "glow", label: "Glow" },
       { id: "effects", label: "Effects" },
       { id: "blend", label: "Blend" },
+      { id: "media", label: "Media", hidden: shape?.type !== "image" },
       { id: "type", label: "Typography", hidden: shape?.type !== "text" },
       { id: "export", label: "Export" },
     ],
@@ -258,7 +305,7 @@ export function InspectorPanel() {
                 label="Type"
                 value={shape.fill.kind}
                 field="fill.kind"
-                options={["solid", "linear"]}
+                options={shape.fill.kind === "media" ? ["media", "solid", "linear"] : ["solid", "linear"]}
               />
               {shape.fill.kind === "solid" ? (
                 <>
@@ -270,12 +317,124 @@ export function InspectorPanel() {
                     field="fill.opacityPercent"
                   />
                 </>
+              ) : shape.fill.kind === "media" ? (
+                <>
+                  <SelectRow label="Fit" value={(shape.fill as any).mode ?? "cover"} field="fill.mode" options={["cover", "contain", "stretch", "tile"]} />
+                  <Grid>
+                    <LabeledInput label="Offset X" type="number" value={(shape.fill as any).offset?.x ?? 0} field="fill.offset.x" />
+                    <LabeledInput label="Offset Y" type="number" value={(shape.fill as any).offset?.y ?? 0} field="fill.offset.y" />
+                    <LabeledInput label="Scale" type="number" value={((shape.fill as any).scale ?? 1) * 100} field="fill.scalePercent" />
+                    <ToggleRow label="Tile / repeat" field="fill.repeat" value={(shape.fill as any).repeat ?? false} />
+                  </Grid>
+                </>
               ) : (
                 <>
                   <LabeledInput label="Angle" type="number" value={shape.fill.angle} field="fill.angle" />
                   <GradientStopsEditor field="fill.stops" stops={shape.fill.stops} />
                 </>
               )}
+            </Section>
+          )}
+
+          {shape.type === "image" && (
+            <Section title="Media" open={!collapsed.media} onToggle={() => toggle("media")}>
+              {(() => {
+                const imgShape = shape as ImageShape;
+                return (
+                  <>
+              <SelectRow
+                label="Fit"
+                value={(imgShape as any).fillMode ?? "cover"}
+                field="fillMode"
+                options={["cover", "contain", "stretch", "tile"]}
+              />
+              <Grid>
+                <LabeledInput label="Offset X" type="number" value={(imgShape as any).fillOffset?.x ?? 0} field="fillOffset.x" />
+                <LabeledInput label="Offset Y" type="number" value={(imgShape as any).fillOffset?.y ?? 0} field="fillOffset.y" />
+                <LabeledInput label="Scale" type="number" value={Math.round(((imgShape as any).fillScale ?? 1) * 100)} field="fillScalePercent" />
+              </Grid>
+              {imgShape.mediaKind === "video" ? (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                  <ToggleRow label="Autoplay" field="playback.autoplay" value={(imgShape as any).playback?.autoplay ?? true} />
+                  <ToggleRow label="Loop" field="playback.loop" value={(imgShape as any).playback?.loop ?? true} />
+                  <ToggleRow label="Muted" field="playback.muted" value={(imgShape as any).playback?.muted ?? true} />
+                </div>
+              ) : null}
+              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ fontWeight: 600, fontSize: 12 }}>Masks</div>
+                {(imgShape as any).masks?.length ? (
+                  (imgShape as any).masks.map((m: any) => (
+                    <div
+                      key={m.id}
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 8,
+                        padding: "6px 8px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <div style={{ display: "flex", flexDirection: "column" }}>
+                        <span style={{ fontSize: 12 }}>{m.name}</span>
+                        <span style={{ fontSize: 11, opacity: 0.65 }}>{m.kind === "bitmap" ? "Bitmap mask" : "Shape mask"}</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+                          <input type="checkbox" checked={m.visible !== false} onChange={() => toggleMaskVisibility(m.id)} />
+                          Visible
+                        </label>
+                        {m.kind === "shape" ? (
+                          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+                            <input type="checkbox" checked={m.inverted ?? false} onChange={() => toggleMaskInvert(m.id)} />
+                            Invert
+                          </label>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>No masks yet. Select a shape and use “Make Mask” or add a bitmap placeholder.</div>
+                )}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={addBitmapMask}
+                    style={{
+                      height: 30,
+                      padding: "0 10px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: "var(--control)",
+                      color: "var(--text)",
+                      cursor: "pointer",
+                      fontSize: 12,
+                    }}
+                  >
+                    Add bitmap mask
+                  </button>
+                  <button
+                    onClick={() => {
+                      assetActions.exportCutout();
+                    }}
+                    style={{
+                      height: 30,
+                      padding: "0 10px",
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: "var(--control)",
+                      color: "var(--text)",
+                      cursor: "pointer",
+                      fontSize: 12,
+                    }}
+                  >
+                    Export cutout
+                  </button>
+                </div>
+              </div>
+                  </>
+                );
+              })()}
             </Section>
           )}
 
@@ -391,7 +550,10 @@ export function InspectorPanel() {
               <Grid>
                 {(() => {
                   const textShape = shape as TextShape;
-                  const textFill = textShape.textFill ?? { enabled: true, kind: "solid", color: textShape.textColor, opacity: 1 };
+                  const textFill = (textShape.textFill &&
+                    (textShape.textFill.kind === "solid" || textShape.textFill.kind === "linear")
+                    ? (textShape.textFill as SolidFill | LinearGradientFill)
+                    : ({ enabled: true, kind: "solid", color: textShape.textColor, opacity: 1 } as SolidFill));
                   return (
                     <>
                       <LabeledInput label="Font" type="text" value={textShape.font} field="font" />
@@ -556,6 +718,13 @@ function LabeledInput({
       "lineHeight",
       "textFill.opacityPercent",
       "textFill.angle",
+      "fill.offset.x",
+      "fill.offset.y",
+      "fill.scalePercent",
+      "fillScale",
+      "fillOffset.x",
+      "fillOffset.y",
+      "fillScalePercent",
     ];
     const isNumeric = numericFields.includes(field);
     let parsed: any = val;
@@ -581,6 +750,14 @@ function LabeledInput({
       if (field === "textFill.opacityPercent") {
         parsed = parsed / 100;
         targetField = "textFill.opacity";
+      }
+      if (field === "fill.scalePercent") {
+        parsed = parsed / 100;
+        targetField = "fill.scale";
+      }
+      if (field === "fillScalePercent") {
+        parsed = parsed / 100;
+        targetField = "fillScale";
       }
       if (field === "rotation") {
         return updateShapeProps(selected, (prev) => {
@@ -778,6 +955,18 @@ function normalizeKind(shape: any, key: "fill" | "stroke" | "textFill", kind: st
             color: current.color ?? "#ffffff",
             opacity: current.opacity ?? 1,
           };
+    return next;
+  }
+  if (kind === "media") {
+    next[key] = {
+      enabled: true,
+      kind: "media",
+      assetId: (current as any)?.assetId ?? "",
+      mode: (current as any)?.mode ?? "cover",
+      offset: (current as any)?.offset ?? { x: 0, y: 0 },
+      scale: (current as any)?.scale ?? 1,
+      repeat: (current as any)?.repeat ?? false,
+    } as any;
     return next;
   }
   next[key] =

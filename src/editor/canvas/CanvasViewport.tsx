@@ -4,6 +4,7 @@ import { DEFAULT_GRID, useEditor, createShapeForTool } from "../../state/editorS
 import { LayerNode, PathShape, Shape } from "../../state/types";
 import { PixiDocumentView } from "./PixiDocumentView";
 import { createSnapManager } from "./snap";
+import { useAssetActions } from "../useAssetActions";
 
 type DragMode = "none" | "pan" | "marquee" | "creating" | "move" | "resize" | "rotate";
 
@@ -23,6 +24,7 @@ export function CanvasViewport() {
     setTool,
     setGrid,
   } = useEditor();
+  const assetActions = useAssetActions();
   const grid = doc.grid ?? DEFAULT_GRID;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const snapper = useMemo(() => createSnapManager(grid), [grid]);
@@ -1018,31 +1020,26 @@ export function CanvasViewport() {
         onDragOver={(e) => {
           e.preventDefault();
         }}
-      onDrop={async (e) => {
-        e.preventDefault();
-        const file = e.dataTransfer.files?.[0];
-        if (!file) return;
-        if (!file.type.startsWith("image/")) return;
-        const world = snapper.snapPoint(toWorld(e.clientX, e.clientY));
-        const src = await readFileAsDataURL(file);
-        const dims = await probeImageSize(src);
-        const maxW = 520;
-        const w = Math.min(maxW, dims.width || 320);
-        const h = dims.width ? (dims.height / dims.width) * w : 240;
-        const base = createShapeForTool("rectangle" as any, { x: world.x, y: world.y }) as any;
-        const imageShape = {
-          ...base,
-          id: crypto.randomUUID(),
-          type: "image",
-          name: file.name,
-          x: world.x,
-          y: world.y,
-          width: Math.max(20, w),
-          height: Math.max(20, h),
-          src,
-        };
-        createShape(imageShape);
-      }}
+        onDrop={async (e) => {
+          e.preventDefault();
+          const assetId = e.dataTransfer.getData("text/asset-id");
+          if (assetId) {
+            const world = snapper.snapPoint(toWorld(e.clientX, e.clientY));
+            const asset = assetActions.assetsById.get(assetId);
+            if (asset) {
+              if (doc.selection.length) {
+                assetActions.fillSelectionWithAsset(asset);
+              } else {
+                assetActions.placeAssetAsLayer(asset, { point: world, mode: "layer" });
+              }
+            }
+            return;
+          }
+          const files = Array.from(e.dataTransfer.files ?? []);
+          if (!files.length) return;
+          const world = snapper.snapPoint(toWorld(e.clientX, e.clientY));
+          await assetActions.importAndPlace(files, { point: world, mode: doc.selection.length ? "fill" : "auto" });
+        }}
     >
         {/* background + grid behind content */}
         <div style={{ position: "absolute", inset: 0, ...paperBackground, pointerEvents: "none" }} />
@@ -1474,24 +1471,6 @@ function normalizePathBounds(path: PathShape): PathShape {
     height: Math.max(1, maxY - minY),
     points,
   };
-}
-
-function readFileAsDataURL(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file"));
-    reader.readAsDataURL(file);
-  });
-}
-
-function probeImageSize(src: string): Promise<{ width: number; height: number }> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-    img.onerror = () => resolve({ width: 0, height: 0 });
-    img.src = src;
-  });
 }
 
 function getCanvasPaperStyle(bg: any): React.CSSProperties {

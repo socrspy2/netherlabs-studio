@@ -1,18 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as PIXI from "pixi.js";
 import { useEditor } from "../../state/editorStore";
-import { Fill, ImageShape, LayerNode, PathShape, Shape, Stroke, TextShape } from "../../state/types";
+import { useAssets } from "../../state/assetStore";
+import { Asset, Fill, ImageShape, LayerNode, MediaFill, MediaFillMode, PathShape, Shape, Stroke, TextShape } from "../../state/types";
 
 const DEFAULT_ARTBOARD = { width: 1800, height: 1200 };
 
 export function PixiDocumentView() {
   const { doc } = useEditor();
+  const { assetsById } = useAssets();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const appRef = useRef<PIXI.Application | null>(null);
   const rootRef = useRef<PIXI.Container | null>(null);
   const worldRef = useRef<PIXI.Container | null>(null);
   const mountedRef = useRef(false);
   const [readyTick, setReadyTick] = useState(0);
+  const [renderError, setRenderError] = useState<string | null>(null);
   const artboard = doc.canvasSize || DEFAULT_ARTBOARD;
 
   // init
@@ -149,15 +152,23 @@ export function PixiDocumentView() {
     const idToDisplay = new Map<string, PIXI.Container>();
 
     world.removeChildren();
-    renderNodes({
-      nodes: flatLayers,
-      parent: world,
-      world,
-      app,
-      createdRenderTextures,
-      idToDisplay,
-      artboard,
-    });
+    try {
+      renderNodes({
+        nodes: flatLayers,
+        parent: world,
+        world,
+        app,
+        createdRenderTextures,
+        idToDisplay,
+        artboard,
+        assets: assetsById,
+        onTextureReady: () => setReadyTick((t) => t + 1),
+      });
+      setRenderError(null);
+    } catch (err: any) {
+      console.error("Render error", err);
+      setRenderError(err?.message ?? "Render failed");
+    }
 
     try {
       app.render();
@@ -168,19 +179,45 @@ export function PixiDocumentView() {
     return () => {
       createdRenderTextures.forEach((t) => t.destroy(true));
     };
-  }, [flatLayers, readyTick, artboard.height, artboard.width]);
+  }, [assetsById, flatLayers, readyTick, artboard.height, artboard.width]);
 
-  return <div ref={hostRef} style={{ position: "absolute", inset: 0 }} />;
+  return (
+    <div ref={hostRef} style={{ position: "absolute", inset: 0 }}>
+      {renderError ? (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(15,23,42,0.9)",
+            color: "#fff",
+            display: "grid",
+            placeItems: "center",
+            zIndex: 10,
+            padding: 16,
+            textAlign: "center",
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Canvas render error</div>
+            <div style={{ fontSize: 12, opacity: 0.8 }}>{renderError}</div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
-function buildShape(shape: Shape): PIXI.Container | null {
+const textureCache = new Map<string, PIXI.Texture>();
+const textureLoading = new Set<string>();
+
+function buildShape(shape: Shape, assets: Map<string, Asset>, onTextureReady: () => void): PIXI.Container | null {
   if (!shape.visible) return null;
   const layers: PIXI.Container[] = [];
-  const dropLayer = buildDropShadowLayer(shape);
+  const dropLayer = buildDropShadowLayer(shape, assets, onTextureReady);
   if (dropLayer) layers.push(dropLayer);
-  const glowLayer = buildGlowLayer(shape);
+  const glowLayer = buildGlowLayer(shape, assets, onTextureReady);
   if (glowLayer) layers.push(glowLayer);
-  const base = buildBaseDisplay(shape);
+  const base = buildBaseDisplay(shape, assets, onTextureReady);
   if (base) layers.push(base);
   if (!layers.length) return null;
   if (layers.length === 1) return layers[0] as any;
@@ -189,7 +226,7 @@ function buildShape(shape: Shape): PIXI.Container | null {
   return root;
 }
 
-function buildBaseDisplay(shape: Shape): PIXI.Container | null {
+function buildBaseDisplay(shape: Shape, assets: Map<string, Asset>, onTextureReady: () => void): PIXI.Container | null {
   if (!shape.visible) return null;
 
   if (shape.type === "text") {
@@ -217,18 +254,11 @@ function buildBaseDisplay(shape: Shape): PIXI.Container | null {
   }
 
   if (shape.type === "image") {
-    const img = shape as ImageShape;
-    if (!img.src) return null;
-    const sprite = new PIXI.Sprite(PIXI.Texture.from(img.src));
-    sprite.x = img.x;
-    sprite.y = img.y;
-    sprite.width = img.width;
-    sprite.height = img.height;
-    sprite.rotation = degToRad(img.rotation);
-    sprite.alpha = img.opacity;
-    sprite.blendMode = toPixiBlendMode(img.blendMode);
-    applyFilters(sprite as any, img);
-    return sprite as any;
+    return buildMediaDisplay(shape as ImageShape, assets, onTextureReady);
+  }
+
+  if ((shape.fill as any)?.kind === "media" && (shape.fill as MediaFill).enabled) {
+    return buildMediaFillDisplay(shape, shape.fill as MediaFill, assets, onTextureReady);
   }
 
   const g = new PIXI.Graphics();
@@ -252,7 +282,196 @@ function buildBaseDisplay(shape: Shape): PIXI.Container | null {
   return g;
 }
 
-function buildDropShadowLayer(shape: Shape) {
+function buildMediaDisplay(shape: ImageShape, assets: Map<string, Asset>, onTextureReady: () => void): PIXI.Container | null {
+  const asset = (shape.assetId && assets.get(shape.assetId)) || null;
+  const texture = resolveTexture(asset, shape, onTextureReady);
+  if (!texture) return null;
+
+  const container = new PIXI.Container();
+  applyTransform(container, shape);
+  container.alpha = shape.opacity;
+  container.blendMode = toPixiBlendMode(shape.blendMode);
+
+  const localShape = { ...shape, x: 0, y: 0 };
+  const sprite = createMediaSprite(texture, localShape, {
+    mode: shape.fillMode ?? "cover",
+    scale: shape.fillScale ?? 1,
+    offset: shape.fillOffset ?? { x: 0, y: 0 },
+    repeat: shape.repeat ?? false,
+    asset,
+  });
+  container.addChild(sprite);
+
+  const maskContainer = buildMaskContainer(localShape, shape.masks);
+  if (maskContainer) {
+    sprite.mask = maskContainer;
+    container.addChild(maskContainer);
+  }
+
+  applyFilters(container as any, shape);
+  return container;
+}
+
+function buildMediaFillDisplay(shape: Shape, fill: MediaFill, assets: Map<string, Asset>, onTextureReady: () => void): PIXI.Container | null {
+  const asset = assets.get(fill.assetId);
+  if (!asset) return null;
+  const texture = resolveTexture(asset, shape as any, onTextureReady);
+  if (!texture) return null;
+  const container = new PIXI.Container();
+  applyTransform(container, shape);
+  container.alpha = shape.opacity;
+  container.blendMode = toPixiBlendMode(shape.blendMode);
+
+  const localShape = { ...shape, x: 0, y: 0 };
+  const sprite = createMediaSprite(texture, localShape, {
+    mode: fill.mode ?? "cover",
+    scale: fill.scale ?? 1,
+    offset: fill.offset ?? { x: 0, y: 0 },
+    repeat: fill.repeat ?? false,
+    asset,
+  });
+
+  const mask = buildMaskGraphics(localShape);
+  if (mask) {
+    sprite.mask = mask;
+    container.addChild(sprite);
+    container.addChild(mask);
+  } else {
+    container.addChild(sprite);
+  }
+
+  if (shape.stroke.enabled) {
+    const stroke = toPixiStroke(shape.stroke);
+    const strokeG = new PIXI.Graphics();
+    drawShapePath(strokeG, localShape);
+    strokeG.stroke(stroke as any);
+    container.addChild(strokeG);
+  }
+
+  applyFilters(container as any, shape);
+  return container;
+}
+
+function resolveTexture(asset: Asset | null, shape: ImageShape, onReady: () => void): PIXI.Texture | null {
+  const src = asset?.src ?? shape.src;
+  if (!src) return null;
+  if (textureCache.has(src)) {
+    return textureCache.get(src)!;
+  }
+
+  // Load image manually if Pixi doesn't attach a baseTexture (data URLs can sometimes skip the loader).
+  if (asset?.kind === "image" && !textureLoading.has(src)) {
+    textureLoading.add(src);
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const tex = PIXI.Texture.from(img);
+        textureCache.set(src, tex);
+        onReady();
+      } catch (err) {
+        console.warn("Failed to build texture from image element", err);
+      } finally {
+        textureLoading.delete(src);
+      }
+    };
+    img.onerror = () => {
+      console.warn("Image load failed", src);
+      textureLoading.delete(src);
+    };
+    img.src = src;
+    return null;
+  }
+
+  let tex: PIXI.Texture | null = null;
+  try {
+    tex = PIXI.Texture.from(src);
+  } catch (err) {
+    console.warn("Failed to create texture", err);
+    return null;
+  }
+  if (!tex || !(tex as any).baseTexture) {
+    console.warn("Texture missing baseTexture", { src });
+    return null;
+  }
+  const base: any = (tex as any).baseTexture;
+  if (base && !base.valid) {
+    base.once?.("loaded", () => onReady());
+    base.once?.("update", () => onReady());
+  }
+  textureCache.set(src, tex);
+
+  const resource: any = base?.resource;
+  const video: HTMLVideoElement | undefined = resource?.source instanceof HTMLVideoElement ? resource.source : undefined;
+  if (video) {
+    video.loop = shape.playback?.loop ?? true;
+    video.muted = shape.playback?.muted ?? true;
+    if (shape.playback?.autoplay !== false) {
+      video.play().catch(() => undefined);
+    } else {
+      video.pause();
+    }
+  }
+  return tex;
+}
+
+function createMediaSprite(
+  texture: PIXI.Texture,
+  shape: Shape,
+  fill: { mode: MediaFillMode; scale: number; offset: { x: number; y: number }; repeat?: boolean; asset?: Asset | null }
+) {
+  if (fill.mode === "tile" || fill.repeat) {
+    const tiling = new PIXI.TilingSprite({ texture, width: Math.max(1, shape.width), height: Math.max(1, shape.height) });
+    tiling.tilePosition.set(fill.offset.x, fill.offset.y);
+    tiling.tileScale.set(fill.scale, fill.scale);
+    return tiling;
+  }
+  const sprite = new PIXI.Sprite(texture);
+  const naturalW = Math.max(1, fill.asset?.width ?? (texture as any).baseTexture?.realWidth ?? texture.width ?? shape.width ?? 1);
+  const naturalH = Math.max(1, fill.asset?.height ?? (texture as any).baseTexture?.realHeight ?? texture.height ?? shape.height ?? 1);
+  let drawW = naturalW;
+  let drawH = naturalH;
+  if (fill.mode === "cover") {
+    const k = Math.max(shape.width / naturalW, shape.height / naturalH) * fill.scale;
+    drawW = naturalW * k;
+    drawH = naturalH * k;
+  } else if (fill.mode === "contain") {
+    const k = Math.min(shape.width / naturalW, shape.height / naturalH) * fill.scale;
+    drawW = naturalW * k;
+    drawH = naturalH * k;
+  } else if (fill.mode === "stretch") {
+    drawW = shape.width * fill.scale;
+    drawH = shape.height * fill.scale;
+  } else {
+    drawW = naturalW * fill.scale;
+    drawH = naturalH * fill.scale;
+  }
+
+  sprite.width = Math.max(1, drawW);
+  sprite.height = Math.max(1, drawH);
+  sprite.x = fill.offset.x + (shape.width - sprite.width) / 2;
+  sprite.y = fill.offset.y + (shape.height - sprite.height) / 2;
+  return sprite;
+}
+
+function buildMaskContainer(shape: Shape, masks?: any[]) {
+  const maskRoot = new PIXI.Container();
+  const baseMask = buildMaskGraphics({ ...shape, x: 0, y: 0 } as Shape);
+  if (baseMask) maskRoot.addChild(baseMask);
+
+  (masks ?? []).forEach((mask: any) => {
+    if (!mask || mask.visible === false) return;
+    if (mask.kind === "shape" && mask.shape) {
+      const g = buildMaskGraphics(mask.shape as Shape, mask.inverted ? shape : undefined, mask.inverted);
+      if (g) maskRoot.addChild(g);
+    }
+  });
+
+  if (!maskRoot.children.length) return null;
+  return maskRoot;
+}
+
+function buildDropShadowLayer(shape: Shape, assets: Map<string, Asset>, onTextureReady: () => void) {
   const shadow = shape.shadow;
   if (!shadow || shadow.enabled === false || shadow.opacity <= 0) return null;
   const color = shadow.color ?? "#000000";
@@ -261,7 +480,7 @@ function buildDropShadowLayer(shape: Shape) {
     x: shadow.x ?? 0,
     y: shadow.y ?? 0,
   });
-  const display = buildBaseDisplay(effectShape);
+  const display = buildBaseDisplay(effectShape, assets, onTextureReady);
   if (!display) return null;
   const blurStrength = Math.max(0, shadow.blur ?? 0);
   const blur = new PIXI.BlurFilter({ strength: blurStrength, quality: 4, resolution: 1 }) as any;
@@ -272,14 +491,14 @@ function buildDropShadowLayer(shape: Shape) {
   return display as any;
 }
 
-function buildGlowLayer(shape: Shape) {
+function buildGlowLayer(shape: Shape, assets: Map<string, Asset>, onTextureReady: () => void) {
   const glow = (shape as any).glow as any;
   if (!glow || glow.enabled === false || glow.opacity <= 0) return null;
   const color = glow.color ?? "#4f46e5";
   const opacity = glow.opacity ?? 0.35;
   const offset = glow.offset ?? { x: 0, y: 0 };
   const effectShape = createEffectShape(shape, color, opacity, true, offset);
-  const display = buildBaseDisplay(effectShape);
+  const display = buildBaseDisplay(effectShape, assets, onTextureReady);
   if (!display) return null;
   const blurStrength = Math.max(0, glow.blur ?? 0);
   const blur = new PIXI.BlurFilter({ strength: blurStrength, quality: 4, resolution: 1 }) as any;
@@ -407,16 +626,22 @@ function toPixiFill(fill: Fill) {
   if (fill.kind === "solid") {
     return { color: fill.color, alpha: fill.opacity };
   }
-  const grad = new (PIXI as any).FillGradient({
-    start: { x: 0, y: 0 },
-    end: angleToUnit(fill.angle),
-    textureSpace: "local",
-    colorStops: fill.stops
-      .slice()
-      .sort((a, b) => a.offset - b.offset)
-      .map((s) => ({ offset: s.offset, color: toRgbaString(s.color, s.opacity) })),
-  });
-  return grad as any;
+  if (fill.kind === "media") {
+    return { color: 0xffffff, alpha: 0 };
+  }
+  if (fill.kind === "linear") {
+    const grad = new (PIXI as any).FillGradient({
+      start: { x: 0, y: 0 },
+      end: angleToUnit(fill.angle),
+      textureSpace: "local",
+      colorStops: fill.stops
+        .slice()
+        .sort((a, b) => a.offset - b.offset)
+        .map((s) => ({ offset: s.offset, color: toRgbaString(s.color, s.opacity) })),
+    });
+    return grad as any;
+  }
+  return { color: 0xffffff, alpha: 0 };
 }
 
 function toPixiStroke(stroke: Stroke) {
@@ -501,21 +726,36 @@ function toPixiBlendMode(mode: Shape["blendMode"] | undefined) {
   return (mode ?? "normal") as any;
 }
 
-function buildMaskGraphics(shape: Shape) {
+function buildMaskGraphics(shape: Shape, bounds?: Shape, inverted = false) {
   const g = new PIXI.Graphics();
-  g.x = shape.x;
-  g.y = shape.y;
-  g.rotation = degToRad(shape.rotation);
-  if (shape.type === "rectangle" || shape.type === "ellipse" || shape.type === "line" || shape.type === "path") {
-    drawShapePath(g, shape);
-    g.fill(0xffffff);
-    if (shape.type === "line") {
-      g.stroke({ width: Math.max(1, (shape.stroke as any)?.width ?? 2), color: 0xffffff, alpha: 1 } as any);
+  g.x = shape.x ?? 0;
+  g.y = shape.y ?? 0;
+  g.rotation = degToRad(shape.rotation ?? 0);
+  const drawMask = () => {
+    if (shape.type === "rectangle" || shape.type === "ellipse" || shape.type === "line" || shape.type === "path") {
+      drawShapePath(g, shape);
+      return;
     }
-    return g;
+    g.rect(0, 0, shape.width, shape.height);
+  };
+
+  if (inverted) {
+    const area = bounds ?? shape;
+    g.rect(0, 0, area.width, area.height);
+    if ((g as any).beginHole) {
+      (g as any).beginHole();
+      drawMask();
+      (g as any).endHole();
+      g.fill(0xffffff);
+      return g;
+    }
   }
-  g.rect(0, 0, shape.width, shape.height);
+
+  drawMask();
   g.fill(0xffffff);
+  if (shape.type === "line") {
+    g.stroke({ width: Math.max(1, (shape.stroke as any)?.width ?? 2), color: 0xffffff, alpha: 1 } as any);
+  }
   return g;
 }
 
@@ -527,6 +767,8 @@ function renderNodes(args: {
   createdRenderTextures: PIXI.Texture[];
   idToDisplay: Map<string, PIXI.Container>;
   artboard: { width: number; height: number };
+  assets: Map<string, Asset>;
+  onTextureReady: () => void;
 }) {
   for (const node of args.nodes) {
     if (node.kind === "group") {
@@ -571,7 +813,7 @@ function renderNodes(args: {
       args.parent.addChild(mask);
     }
 
-    const display = buildShape(shape);
+    const display = buildShape(shape, args.assets, args.onTextureReady);
     if (display) {
       args.idToDisplay.set(shape.id, display);
       args.parent.addChild(display);

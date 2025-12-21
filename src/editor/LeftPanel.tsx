@@ -2,6 +2,8 @@ import React, { useMemo, useState } from "react";
 import { Eye, EyeOff, Lock, Unlock, Layers, Image, FileStack, Copy, Trash2, ArrowUp, ArrowDown } from "lucide-react";
 import { useEditor } from "../state/editorStore";
 import { LayerNode } from "../state/types";
+import { useAssets } from "../state/assetStore";
+import { useAssetActions } from "./useAssetActions";
 
 type Tab = "pages" | "layers" | "assets";
 
@@ -68,9 +70,196 @@ function PagesPanel() {
 }
 
 function AssetsPanel() {
+  const { assets, maps, addMap, setAssetMap, removeAsset } = useAssets();
+  const { doc } = useEditor();
+  const { importAndPlace, placeAssetAsLayer, fillSelectionWithAsset } = useAssetActions();
+  const [dragActive, setDragActive] = useState(false);
+  const [newMap, setNewMap] = useState("");
+  const [activeMap, setActiveMap] = useState<string>("All");
+
+  const visibleAssets = assets.filter((asset) => {
+    if (activeMap === "All") return true;
+    if (!asset.map && activeMap === "Default") return true;
+    return asset.map === activeMap;
+  });
+
   return (
-    <div style={{ color: "var(--text-muted)", fontSize: 13, opacity: 0.8 }}>
-      Drop assets or components here later.
+    <div
+      style={{ display: "flex", flexDirection: "column", gap: 10 }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragActive(true);
+      }}
+      onDragLeave={() => setDragActive(false)}
+      onDrop={async (e) => {
+        e.preventDefault();
+        setDragActive(false);
+        const files = Array.from(e.dataTransfer.files ?? []);
+        if (files.length) {
+          await importAndPlace(files, { mode: doc.selection.length ? "fill" : "auto" });
+        }
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <select
+          value={activeMap}
+          onChange={(e) => setActiveMap(e.target.value)}
+          className="themed-select"
+          style={{ height: 32, minWidth: 140 }}
+        >
+          <option value="All">All maps</option>
+          {maps.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!newMap.trim()) return;
+            addMap(newMap.trim());
+            setNewMap("");
+            setActiveMap(newMap.trim());
+          }}
+          style={{ display: "flex", alignItems: "center", gap: 6 }}
+        >
+          <input
+            value={newMap}
+            onChange={(e) => setNewMap(e.target.value)}
+            placeholder="New map name"
+            style={{
+              height: 32,
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              background: "var(--control)",
+              color: "var(--text)",
+              padding: "0 8px",
+            }}
+          />
+          <button
+            type="submit"
+            style={{
+              height: 32,
+              padding: "0 10px",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              background: "var(--control)",
+              color: "var(--text)",
+              cursor: "pointer",
+              fontSize: 12,
+            }}
+          >
+            Add map
+          </button>
+        </form>
+      </div>
+
+      <div
+        style={{
+          border: "1px dashed var(--border)",
+          borderRadius: 12,
+          padding: 12,
+          textAlign: "center",
+          background: dragActive ? "var(--selection)" : "var(--surface-subtle)",
+          color: "var(--text)",
+          fontSize: 12,
+        }}
+      >
+        Drag & drop to import images/videos. Select a shape to fill, or leave empty to place as a layer.
+      </div>
+
+      {!visibleAssets.length ? (
+        <div style={{ color: "var(--text-muted)", fontSize: 13, opacity: 0.8 }}>No assets yet. Import via File → Import or drop files here.</div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
+          {visibleAssets.map((asset) => (
+            <div
+              key={asset.id}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = "copy";
+                e.dataTransfer.setData("text/asset-id", asset.id);
+              }}
+              onDoubleClick={() => {
+                if (doc.selection.length) fillSelectionWithAsset(asset);
+                else placeAssetAsLayer(asset);
+              }}
+              style={{
+                border: "1px solid var(--border)",
+                background: "var(--control)",
+                borderRadius: 12,
+                padding: 8,
+                textAlign: "left",
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                cursor: "pointer",
+                color: "var(--text)",
+              }}
+            >
+              <div
+                style={{
+                  position: "relative",
+                  borderRadius: 10,
+                  overflow: "hidden",
+                  aspectRatio: "4 / 3",
+                  background: "var(--surface)",
+                  display: "grid",
+                  placeItems: "center",
+                }}
+              >
+                {asset.kind === "video" ? (
+                  <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.55)", color: "#fff", padding: "2px 6px", borderRadius: 8, fontSize: 10 }}>
+                    video
+                  </div>
+                ) : null}
+                <img
+                  src={asset.poster ?? asset.src}
+                  alt={asset.name}
+                  style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }}
+                />
+              </div>
+              <div style={{ fontWeight: 600, fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{asset.name}</div>
+              <div style={{ fontSize: 11, opacity: 0.75 }}>
+                {asset.width}×{asset.height} {asset.kind === "video" ? "· video" : ""}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <label style={{ fontSize: 11, opacity: 0.75 }}>Map:</label>
+                <select
+                  value={asset.map ?? "Default"}
+                  onChange={(e) => setAssetMap(asset.id, e.target.value)}
+                  className="themed-select"
+                  style={{ height: 24, fontSize: 11, flex: 1 }}
+                >
+                  {maps.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  onClick={() => {
+                    if (doc.selection.length) fillSelectionWithAsset(asset);
+                    else placeAssetAsLayer(asset);
+                  }}
+                  style={{ fontSize: 11, opacity: 0.9, background: "var(--surface)", padding: "4px 8px", borderRadius: 8, border: "1px solid var(--border)", color: "var(--text)", cursor: "pointer" }}
+                >
+                  {doc.selection.length ? "Fill selection" : "Place layer"}
+                </button>
+                <button
+                  onClick={() => removeAsset(asset.id)}
+                  style={{ fontSize: 11, opacity: 0.9, background: "var(--surface)", padding: "4px 8px", borderRadius: 8, border: "1px solid var(--border)", color: "var(--text)", cursor: "pointer" }}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

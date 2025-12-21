@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   MousePointer2,
@@ -22,10 +22,14 @@ import {
   PanelTop,
   Play,
   X,
+  Upload,
+  Clapperboard,
+  Scissors,
 } from "lucide-react";
 import { useEditor } from "../state/editorStore";
 import { ToolId } from "../state/types";
 import { useTheme } from "../state/themeStore";
+import { useAssetActions } from "./useAssetActions";
 
 const toolIcons: Record<ToolId, React.ReactNode> = {
   select: <MousePointer2 size={16} />,
@@ -51,10 +55,24 @@ const toolOrder: ToolId[] = ["select", "direction", "frame", "line", "text", "pe
 export function TopBar() {
   const { doc, setTool, undo, redo, preview, setPreview } = useEditor();
   const { themeId, setThemeId, options } = useTheme();
+  const assetActions = useAssetActions();
   const [supportOpen, setSupportOpen] = useState(false);
   const [shapeOpen, setShapeOpen] = useState(false);
+  const [fileOpen, setFileOpen] = useState(false);
+  const fileButtonRef = useRef<HTMLButtonElement | null>(null);
+  const fileMenuRef = useRef<HTMLDivElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
   const shapeButtonRef = useRef<HTMLButtonElement | null>(null);
   const shapeMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const importFiles = useCallback(
+    async (files: File[], kind?: "image" | "video") => {
+      await assetActions.importAndPlace(files, { mode: doc.selection.length ? "fill" : "auto", expectedKind: kind });
+      setFileOpen(false);
+    },
+    [assetActions, doc.selection.length]
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -75,6 +93,26 @@ export function TopBar() {
       window.removeEventListener("mousedown", onClick);
     };
   }, [shapeOpen]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setFileOpen(false);
+      }
+    };
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (fileOpen && !fileButtonRef.current?.contains(target) && !fileMenuRef.current?.contains(target)) {
+        setFileOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onClick);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onClick);
+    };
+  }, [fileOpen]);
 
   React.useEffect(() => {
     if (!supportOpen) return;
@@ -126,6 +164,76 @@ export function TopBar() {
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 20, position: "relative" }}>
+        <div style={{ position: "relative" }}>
+          <button
+            ref={fileButtonRef}
+            onClick={() => setFileOpen((v) => !v)}
+            style={{
+              height: 34,
+              minWidth: 48,
+              padding: "0 12px",
+              borderRadius: 10,
+              background: fileOpen ? "var(--selection)" : "transparent",
+              border: "1px solid var(--border)",
+              color: "var(--text)",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              cursor: "pointer",
+            }}
+            title="File"
+          >
+            <Upload size={16} />
+            <span style={{ fontSize: 12 }}>File</span>
+          </button>
+          {fileOpen && (
+            <div
+              ref={fileMenuRef}
+              style={{
+                position: "absolute",
+                top: 42,
+                left: 0,
+                background: "var(--panel-strong)",
+                border: "1px solid var(--border)",
+                borderRadius: 10,
+                boxShadow: "0 10px 40px rgba(0,0,0,0.28)",
+                padding: 6,
+                minWidth: 180,
+                zIndex: 2200,
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+              }}
+            >
+              <button
+                onClick={() => imageInputRef.current?.click()}
+                style={menuBtnStyle}
+              >
+                <Upload size={14} />
+                Import Image(s)
+              </button>
+              <button
+                onClick={() => videoInputRef.current?.click()}
+                style={menuBtnStyle}
+              >
+                <Clapperboard size={14} />
+                Import Video(s)
+              </button>
+              <button
+                onClick={async () => {
+                  const res = await assetActions.exportCutout();
+                  if (!res) alert("Select an image/video layer with a mask to export a cutout.");
+                  setFileOpen(false);
+                }}
+                style={menuBtnStyle}
+              >
+                <Scissors size={14} />
+                Export Cutout
+              </button>
+            </div>
+          )}
+        </div>
+
         <button
           ref={shapeButtonRef}
           onClick={() => setShapeOpen((v) => !v)}
@@ -299,6 +407,31 @@ export function TopBar() {
         </div>
       </div>
 
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/svg+xml"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          if (files.length) importFiles(files, "image");
+          e.target.value = "";
+        }}
+      />
+      <input
+        ref={videoInputRef}
+        type="file"
+        accept="video/mp4,video/webm"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          if (files.length) importFiles(files, "video");
+          e.target.value = "";
+        }}
+      />
+
       {supportOpen &&
         createPortal(
           <div
@@ -431,4 +564,20 @@ const iconBtnStyle: React.CSSProperties = {
   cursor: "pointer",
   display: "grid",
   placeItems: "center",
+};
+
+const menuBtnStyle: React.CSSProperties = {
+  height: 32,
+  borderRadius: 10,
+  border: "1px solid var(--border)",
+  background: "var(--control)",
+  color: "var(--text)",
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "0 10px",
+  fontSize: 12,
+  width: "100%",
+  textAlign: "left",
 };

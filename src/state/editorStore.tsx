@@ -50,7 +50,7 @@ type EditorContextValue = {
   bring: (dir: "front" | "back" | "up" | "down") => void;
   moveLayer: (draggedId: string, targetId: string, position: "before" | "after") => void;
   makeMaskFromSelection: () => void;
-  toggleMask: (groupId: string) => void;
+  toggleMask: (id: string, maskId?: string) => void;
   toggleVisible: (id: string) => void;
   toggleLocked: (id: string) => void;
   renameLayer: (id: string, name: string) => void;
@@ -130,7 +130,18 @@ function baseShape(type: Shape["type"], name: string, x: number, y: number): Sha
   }
 
   if (type === "image") {
-    return { ...common, type: "image", src: "" } as any;
+    return {
+      ...common,
+      type: "image",
+      src: "",
+      mediaKind: "image",
+      fillMode: "cover",
+      fillOffset: { x: 0, y: 0 },
+      fillScale: 1,
+      repeat: false,
+      masks: [],
+      playback: { autoplay: true, loop: true, muted: true },
+    } as any;
   }
 
   return common as Shape;
@@ -369,6 +380,34 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
   const makeMaskFromSelection = useCallback(() => {
     if (doc.selection.length < 2) return;
     const next = structuredClone(doc);
+    const flat = flatten(next.layers);
+    const selectedNodes = flat.filter((n) => doc.selection.includes(n.id));
+    const target = selectedNodes.find((n) => n.kind === "shape" && (n as any).shape.type === "image") as ShapeNode | undefined;
+    const maskShapes = selectedNodes.filter((n) => n.kind === "shape" && (!target || n.id !== target.id)) as ShapeNode[];
+
+    if (target && maskShapes.length) {
+      const targetShape = target.shape as any;
+      const masks = Array.from(targetShape.masks ?? []);
+      maskShapes.forEach((m) => {
+        const clone = structuredClone(m.shape) as Shape;
+        clone.x = clone.x - targetShape.x;
+        clone.y = clone.y - targetShape.y;
+        masks.push({
+          id: crypto.randomUUID(),
+          kind: "shape",
+          name: m.shape.name,
+          visible: true,
+          inverted: false,
+          shape: clone,
+        });
+        m.shape.visible = false;
+      });
+      targetShape.masks = masks as any;
+      next.selection = [target.id];
+      commit(next);
+      return;
+    }
+
     next.layers = maskGroupWithinSameParent(next.layers, doc.selection, "Mask");
     const grouped = flatten(next.layers).find((n) => n.kind === "group" && n.mask?.enabled);
     next.selection = grouped ? [grouped.id] : [];
@@ -376,13 +415,24 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
   }, [commit, doc]);
 
   const toggleMask = useCallback(
-    (groupId: string) => {
+    (id: string, maskId?: string) => {
       const next = structuredClone(doc);
       const flat = flatten(next.layers);
-      const node = flat.find((n) => n.kind === "group" && n.id === groupId) as any;
-      if (!node?.mask) return;
-      node.mask.enabled = !node.mask.enabled;
-      commit(next);
+      const groupNode = flat.find((n) => n.kind === "group" && n.id === id) as any;
+      if (groupNode?.mask) {
+        groupNode.mask.enabled = !groupNode.mask.enabled;
+        commit(next);
+        return;
+      }
+      const shapeNode = flat.find((n) => n.kind === "shape" && n.id === id) as any;
+      if (shapeNode?.shape?.type === "image" && shapeNode.shape.masks?.length) {
+        const masks = shapeNode.shape.masks as any[];
+        const targetMask = maskId ? masks.find((m) => m.id === maskId) : masks[0];
+        if (targetMask) {
+          targetMask.visible = targetMask.visible === false ? true : !targetMask.visible;
+          commit(next);
+        }
+      }
     },
     [commit, doc]
   );

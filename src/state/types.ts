@@ -65,7 +65,7 @@ export type LinearGradientFill = {
   stops: GradientStop[];
 };
 
-export type Fill = SolidFill | LinearGradientFill;
+export type Fill = SolidFill | LinearGradientFill | MediaFill;
 
 export type SolidStroke = {
   enabled: boolean;
@@ -116,6 +116,34 @@ export type LayerBlendMode =
 export type Effects = {
   blur: number;
   backgroundBlur: number;
+};
+
+export type AssetKind = "image" | "video";
+
+export type Asset = {
+  id: string;
+  kind: AssetKind;
+  name: string;
+  mimeType: string;
+  src: string;
+  width: number;
+  height: number;
+  duration?: number;
+  poster?: string;
+  map?: string;
+  createdAt: number;
+};
+
+export type MediaFillMode = "cover" | "contain" | "stretch" | "tile";
+
+export type MediaFill = {
+  enabled: boolean;
+  kind: "media";
+  assetId: string;
+  mode: MediaFillMode;
+  offset: { x: number; y: number };
+  scale: number;
+  repeat?: boolean;
 };
 
 export type BaseShape = {
@@ -171,9 +199,38 @@ export type PathShape = BaseShape & {
 export type ImageShape = BaseShape & {
   type: "image";
   src: string; // data URL or URL
+  assetId?: string;
+  mediaKind?: AssetKind;
+  poster?: string;
+  fillMode?: MediaFillMode;
+  fillOffset?: { x: number; y: number };
+  fillScale?: number;
+  repeat?: boolean;
+  masks?: MediaMask[];
+  playback?: { autoplay: boolean; loop: boolean; muted: boolean };
 };
 
 export type Shape = BaseShape | TextShape | PathShape | ImageShape;
+
+export type BitmapMask = {
+  id: string;
+  kind: "bitmap";
+  name: string;
+  visible: boolean;
+  inverted?: boolean;
+  data?: string; // placeholder for future bitmap mask data
+};
+
+export type ShapeMask = {
+  id: string;
+  kind: "shape";
+  name: string;
+  visible: boolean;
+  inverted?: boolean;
+  shape: Shape;
+};
+
+export type MediaMask = ShapeMask | BitmapMask;
 
 export type GroupNode = {
   id: string;
