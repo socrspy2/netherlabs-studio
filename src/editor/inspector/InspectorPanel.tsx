@@ -521,6 +521,8 @@ function LabeledInput({
   const selected = doc.selection[0];
   if (!selected) return null;
 
+  const dragRef = React.useRef<{ startY: number; startValue: number; pointerId: number } | null>(null);
+
   const onChange = (val: string) => {
     const numericFields = [
       "x",
@@ -580,26 +582,86 @@ function LabeledInput({
         parsed = parsed / 100;
         targetField = "textFill.opacity";
       }
+      if (field === "rotation") {
+        return updateShapeProps(selected, (prev) => {
+          const next = applyPath(prev, targetField, parsed);
+          return { ...next, matrix: undefined };
+        });
+      }
     }
     updateShapeProps(selected, (prev) => applyPath(prev, targetField, parsed));
   };
 
+  React.useEffect(() => {
+    const onPointerMove = (e: PointerEvent) => {
+      if (!dragRef.current) return;
+      const { startY, startValue } = dragRef.current;
+      const delta = Math.round(startY - e.clientY);
+      const next = startValue + delta;
+      if (Number.isFinite(next)) {
+        onChange(String(next));
+      }
+    };
+    const onPointerUp = () => {
+      dragRef.current = null;
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [onChange]);
+
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
       <span style={{ opacity: 0.7 }}>{label}</span>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={{
-          height: 32,
-          borderRadius: 8,
-          border: "1px solid var(--border)",
-          background: "var(--control)",
-          color: "var(--text)",
-          padding: "0 8px",
-        }}
-      />
+      <div style={{ position: "relative" }}>
+        <input
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={{
+            height: 32,
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--control)",
+            color: "var(--text)",
+            padding: "0 24px 0 8px",
+            width: "100%",
+            boxSizing: "border-box",
+          }}
+        />
+        {type === "number" ? (
+          <div
+            onPointerDown={(e) => {
+              if (e.button === 0) {
+                dragRef.current = { startY: e.clientY, startValue: Number(value) || 0, pointerId: e.pointerId };
+                e.preventDefault();
+              }
+            }}
+            style={{
+              position: "absolute",
+              right: 4,
+              top: 4,
+              bottom: 4,
+              width: 16,
+              borderRadius: 6,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "ns-resize",
+              opacity: 0.6,
+              fontSize: 10,
+              userSelect: "none",
+            }}
+          >
+            <span style={{ lineHeight: "10px" }}>▲</span>
+            <span style={{ lineHeight: "10px" }}>▼</span>
+          </div>
+        ) : null}
+      </div>
     </label>
   );
 }

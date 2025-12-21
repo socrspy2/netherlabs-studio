@@ -31,6 +31,7 @@ export function CanvasViewport() {
   const [gridMenuOpen, setGridMenuOpen] = useState(false);
   const gridButtonRef = useRef<HTMLButtonElement | null>(null);
   const gridMenuRef = useRef<HTMLDivElement | null>(null);
+  const [alignGuides, setAlignGuides] = useState<{ v?: number; h?: number }>({});
   const [marquee, setMarquee] = useState<Marquee | null>(null);
   const [activeShape, setActiveShape] = useState<Shape | null>(null);
   const [penDraft, setPenDraft] = useState<{ points: PathShape["points"] } | null>(null);
@@ -102,8 +103,9 @@ export function CanvasViewport() {
   const selectionBounds = useMemo(() => {
     if (!selectedShapes.length) return null;
     const allCorners: { x: number; y: number }[] = [];
+    const primaryCorners = shapeWorldCorners(selectedShapes[0]);
     selectedShapes.forEach((s) => {
-      const corners = shapeWorldBounds(s);
+      const corners = shapeWorldCorners(s);
       allCorners.push(...corners);
     });
     if (!allCorners.length) return null;
@@ -113,8 +115,33 @@ export function CanvasViewport() {
     const minY = Math.min(...ys);
     const maxX = Math.max(...xs);
     const maxY = Math.max(...ys);
-    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY, rotation: selectedShapes[0]?.rotation ?? 0 };
+    const rotation =
+      selectedShapes.length === 1 && primaryCorners.length >= 2
+        ? (Math.atan2(primaryCorners[1].y - primaryCorners[0].y, primaryCorners[1].x - primaryCorners[0].x) * 180) / Math.PI
+        : 0;
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+      rotation,
+      corners: selectedShapes.length === 1 ? primaryCorners : [
+        { x: minX, y: minY },
+        { x: maxX, y: minY },
+        { x: maxX, y: maxY },
+        { x: minX, y: maxY },
+      ],
+    };
   }, [selectedShapes]);
+
+  const rotatePivot = useMemo(() => {
+    if (!selectedShapes.length) return null;
+    if (selectedShapes.length === 1) {
+      return shapeWorldCenter(selectedShapes[0]);
+    }
+    if (!selectionBounds) return null;
+    return { x: selectionBounds.x + selectionBounds.width / 2, y: selectionBounds.y + selectionBounds.height / 2 };
+  }, [selectedShapes, selectionBounds]);
 
   useEffect(() => {
     if (!selectedPath) {
@@ -247,15 +274,13 @@ export function CanvasViewport() {
         y: viewCenter.y - contentCenter.y * doc.viewport.zoom,
       },
     });
-  }, [doc.canvasSize?.height, doc.canvasSize?.width, doc.layers, doc.viewport.zoom, updateViewport]);
+  }, [doc.canvasSize, doc.layers, doc.viewport.zoom, updateViewport]);
 
+  const didInitialCenter = useRef(false);
   useEffect(() => {
+    if (didInitialCenter.current) return;
     recenterViewport();
-  }, [recenterViewport]);
-
-  // force recenter on mount/rehydrate to avoid lost canvas
-  useEffect(() => {
-    recenterViewport();
+    didInitialCenter.current = true;
   }, [recenterViewport]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -265,8 +290,9 @@ export function CanvasViewport() {
     const world = snapper.snapPoint(worldRaw, { altPressed: e.altKey });
     const hitWorld = worldRaw;
     startPoint.current = world;
+    setAlignGuides({});
 
-    const isPan = doc.tool === "hand";
+    const isPan = doc.tool === "hand" || e.button === 1;
     if (isPan) {
       (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
       setDragMode("pan");
@@ -664,14 +690,40 @@ export function CanvasViewport() {
     }
 
     if (dragMode === "move") {
-      const totalDx = world.x - startPoint.current.x;
-      const totalDy = world.y - startPoint.current.y;
+      const totalDxRaw = world.x - startPoint.current.x;
+      const totalDyRaw = world.y - startPoint.current.y;
+      const startBounds = dragSnapshot.current.bounds;
+      let snapDx = totalDxRaw;
+      let snapDy = totalDyRaw;
+
+      // center-align helpers against canvas center
+      if (startBounds) {
+        const canvasCenter = { x: canvasSize.width / 2, y: canvasSize.height / 2 };
+        const nextCenter = {
+          x: startBounds.x + startBounds.width / 2 + snapDx,
+          y: startBounds.y + startBounds.height / 2 + snapDy,
+        };
+        const threshold = 6 / doc.viewport.zoom;
+        const vDelta = canvasCenter.x - nextCenter.x;
+        const hDelta = canvasCenter.y - nextCenter.y;
+        const nextGuides: { v?: number; h?: number } = {};
+        if (Math.abs(vDelta) <= threshold) {
+          snapDx += vDelta;
+          nextGuides.v = canvasCenter.x;
+        }
+        if (Math.abs(hDelta) <= threshold) {
+          snapDy += hDelta;
+          nextGuides.h = canvasCenter.y;
+        }
+        setAlignGuides(nextGuides);
+      }
+
       applyShapePatches(
         dragSnapshot.current.shapes.map((s) => ({
           id: s.id,
           changes: {
-            x: snapper.snapValue(s.x + totalDx, { altPressed: e.altKey }),
-            y: snapper.snapValue(s.y + totalDy, { altPressed: e.altKey }),
+            x: snapper.snapValue(s.x + snapDx, { altPressed: e.altKey }),
+            y: snapper.snapValue(s.y + snapDy, { altPressed: e.altKey }),
           },
         })),
         false
@@ -734,21 +786,20 @@ export function CanvasViewport() {
     if (dragMode === "rotate" && rotateCenter.current) {
       const center = rotateCenter.current;
       const angle = (Math.atan2(world.y - center.y, world.x - center.x) * 180) / Math.PI;
-      const delta = angle - rotateStartAngle.current;
+      let delta = normalizeAngleDelta(angle - rotateStartAngle.current);
+      if (e.shiftKey) {
+        delta = Math.round(delta / 15) * 15;
+      }
       applyShapePatches(
-        dragSnapshot.current.shapes.map((s) => {
-          const cx = s.x + s.width / 2;
-          const cy = s.y + s.height / 2;
-          const nextCenter = rotatePoint(cx, cy, center.x, center.y, delta);
-          return {
-            id: s.id,
-            changes: {
-              x: nextCenter.x - s.width / 2,
-              y: nextCenter.y - s.height / 2,
-              rotation: s.rotation + delta,
-            },
-          };
-        }),
+        dragSnapshot.current.shapes.map((s) => ({
+          id: s.id,
+          changes: (shape) => {
+            const base = dragSnapshot.current.shapes.find((b) => b.id === s.id) ?? shape ?? s;
+            if (!base) return shape ?? s;
+            const rotated = applyRotationDelta(base, center, delta);
+            return rotated;
+          },
+        })),
         false
       );
       return;
@@ -776,6 +827,7 @@ export function CanvasViewport() {
       setDragMode("none");
       return;
     }
+    setAlignGuides({});
     setDragMode("none");
     setMarquee(null);
     resizeStart.current = null;
@@ -1006,12 +1058,12 @@ export function CanvasViewport() {
               <svg width={canvasSize.width} height={canvasSize.height} style={{ overflow: "visible" }}>
                 <defs>
                 <pattern id={gridPatternId} width="40" height="40" patternUnits="userSpaceOnUse">
-                  <rect width="40" height="40" fill="none" stroke="var(--border)" strokeWidth="1" opacity={0.3} />
-                  <rect width="10" height="10" fill="none" stroke="var(--border)" strokeWidth="0.5" opacity={0.18} />
+                  <rect width="40" height="40" fill="none" stroke={grid.color} strokeWidth="1" opacity={0.45} />
+                  <rect width="10" height="10" fill="none" stroke={grid.color} strokeWidth="0.5" opacity={0.3} />
                 </pattern>
               </defs>
               <rect width={canvasSize.width} height={canvasSize.height} fill="#ffffff" />
-              <rect width={canvasSize.width} height={canvasSize.height} fill={`url(#${gridPatternId})`} />
+              {grid.visible ? <rect width={canvasSize.width} height={canvasSize.height} fill={`url(#${gridPatternId})`} /> : null}
               <rect width={canvasSize.width} height={canvasSize.height} fill="none" stroke="rgba(0,0,0,0.18)" strokeWidth={3} />
             </svg>
           </div>
@@ -1058,9 +1110,35 @@ export function CanvasViewport() {
                     strokeDasharray="6 4"
                   />
                 )}
-                {selectionBounds && (
+                {alignGuides.v !== undefined ? (
+                  <line
+                    x1={alignGuides.v}
+                    y1={0}
+                    x2={alignGuides.v}
+                    y2={canvasSize.height}
+                    stroke="var(--accent)"
+                    strokeWidth={1}
+                    strokeOpacity={0.7}
+                    strokeDasharray="4 4"
+                  />
+                ) : null}
+                {alignGuides.h !== undefined ? (
+                  <line
+                    x1={0}
+                    y1={alignGuides.h}
+                    x2={canvasSize.width}
+                    y2={alignGuides.h}
+                    stroke="var(--accent)"
+                    strokeWidth={1}
+                    strokeOpacity={0.7}
+                    strokeDasharray="4 4"
+                  />
+                ) : null}
+                {selectionBounds && rotatePivot && (
                   <SelectionOutline
                     bounds={selectionBounds}
+                    corners={selectionBounds.corners}
+                    pivot={rotatePivot}
                     onMoveStart={(e) => {
                       if (!containerRef.current) return;
                       e.preventDefault();
@@ -1094,17 +1172,14 @@ export function CanvasViewport() {
                     }}
                     onRotateStart={(e) => {
                       checkpoint();
-                      if (!containerRef.current) return;
+                      if (!containerRef.current || !rotatePivot) return;
                       e.preventDefault();
                       e.stopPropagation();
                       containerRef.current.setPointerCapture(e.pointerId);
                       const world = toWorld(e.clientX, e.clientY);
-                      rotateCenter.current = {
-                        x: selectionBounds.x + selectionBounds.width / 2,
-                        y: selectionBounds.y + selectionBounds.height / 2,
-                      };
+                      rotateCenter.current = rotatePivot;
                       rotateStartAngle.current =
-                        (Math.atan2(world.y - rotateCenter.current.y, world.x - rotateCenter.current.x) * 180) / Math.PI;
+                        (Math.atan2(world.y - rotatePivot.y, world.x - rotatePivot.x) * 180) / Math.PI;
                       dragSnapshot.current = { shapes: selectedShapes, bounds: selectionBounds };
                       setDragMode("rotate");
                     }}
@@ -1281,19 +1356,23 @@ function PreviewShapeOutline({ shape }: { shape: Shape }) {
 
 function SelectionOutline({
   bounds,
+  pivot,
+  corners,
   onMoveStart,
   onResizeStart,
   onRotateStart,
 }: {
   bounds: { x: number; y: number; width: number; height: number; rotation: number };
+  pivot: { x: number; y: number };
+  corners: { x: number; y: number }[];
   onMoveStart: (e: React.PointerEvent) => void;
   onResizeStart: (dir: string, e: React.PointerEvent) => void;
   onRotateStart: (e: React.PointerEvent) => void;
 }) {
-  const handle = (dir: string, x: number, y: number) => (
+  const handle = (dir: string, cx: number, cy: number) => (
     <rect
-      x={x}
-      y={y}
+      x={cx - 5}
+      y={cy - 5}
       width={10}
       height={10}
       fill="var(--accent)"
@@ -1307,13 +1386,24 @@ function SelectionOutline({
     />
   );
 
+  const topMid = midpoint(corners[0], corners[1]);
+  const rightMid = midpoint(corners[1], corners[2]);
+  const bottomMid = midpoint(corners[2], corners[3]);
+  const leftMid = midpoint(corners[3], corners[0]);
+  const edge = { x: corners[1].x - corners[0].x, y: corners[1].y - corners[0].y };
+  const edgeLen = Math.hypot(edge.x, edge.y) || 1;
+  const normal = { x: -edge.y / edgeLen, y: edge.x / edgeLen };
+  const rotateHandle = {
+    lineEnd: { x: topMid.x + normal.x * 16, y: topMid.y + normal.y * 16 },
+    knob: { x: topMid.x + normal.x * 24, y: topMid.y + normal.y * 24 },
+  };
+
+  const polygonPoints = corners.map((c) => `${c.x},${c.y}`).join(" ");
+
   return (
-    <g transform={`translate(${bounds.x} ${bounds.y})`}>
-      <rect
-        x={0}
-        y={0}
-        width={bounds.width}
-        height={bounds.height}
+    <g>
+      <polygon
+        points={polygonPoints}
         fill="none"
         stroke="var(--accent)"
         strokeDasharray="6 4"
@@ -1323,9 +1413,18 @@ function SelectionOutline({
           onMoveStart(e);
         }}
       />
+      <line
+        x1={pivot.x}
+        y1={pivot.y}
+        x2={rotateHandle.lineEnd.x}
+        y2={rotateHandle.lineEnd.y}
+        stroke="var(--accent)"
+        strokeWidth={1}
+        strokeDasharray="4 3"
+      />
       <circle
-        cx={bounds.width / 2}
-        cy={-24}
+        cx={rotateHandle.knob.x}
+        cy={rotateHandle.knob.y}
         r={6}
         fill="var(--accent-strong)"
         stroke="var(--bg)"
@@ -1336,14 +1435,14 @@ function SelectionOutline({
           onRotateStart(e);
         }}
       />
-      {handle("nw", -5, -5)}
-      {handle("ne", bounds.width - 5, -5)}
-      {handle("sw", -5, bounds.height - 5)}
-      {handle("se", bounds.width - 5, bounds.height - 5)}
-      {handle("n", bounds.width / 2 - 5, -5)}
-      {handle("s", bounds.width / 2 - 5, bounds.height - 5)}
-      {handle("w", -5, bounds.height / 2 - 5)}
-      {handle("e", bounds.width - 5, bounds.height / 2 - 5)}
+      {handle("nw", corners[0].x, corners[0].y)}
+      {handle("ne", corners[1].x, corners[1].y)}
+      {handle("se", corners[2].x, corners[2].y)}
+      {handle("sw", corners[3].x, corners[3].y)}
+      {handle("n", topMid.x, topMid.y)}
+      {handle("e", rightMid.x, rightMid.y)}
+      {handle("s", bottomMid.x, bottomMid.y)}
+      {handle("w", leftMid.x, leftMid.y)}
     </g>
   );
 }
@@ -1616,17 +1715,64 @@ function rotatePoint(x: number, y: number, ox: number, oy: number, deg: number) 
   return { x: ox + dx * cos - dy * sin, y: oy + dx * sin + dy * cos };
 }
 
+function midpoint(a: { x: number; y: number }, b: { x: number; y: number }) {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+function transformPoint(m: DOMMatrix, x: number, y: number) {
+  const p = new DOMPoint(x, y).matrixTransform(m);
+  return { x: p.x, y: p.y };
+}
+
+function applyRotationDelta(shape: Shape, pivot: { x: number; y: number }, delta: number): Shape {
+  const baseMatrix = deriveMatrix(shape);
+  const transform = new DOMMatrix()
+    .translate(pivot.x, pivot.y)
+    .rotate(delta)
+    .translate(-pivot.x, -pivot.y)
+    .multiply(baseMatrix);
+  const decomposed = decomposeMatrix(transform);
+  return { ...shape, ...decomposed, matrix: transform };
+}
+
+function decomposeMatrix(m: DOMMatrix) {
+  const rotation = (Math.atan2(m.b, m.a) * 180) / Math.PI;
+  const x = m.e;
+  const y = m.f;
+  return { x, y, rotation };
+}
+
+function deriveMatrix(shape: Shape) {
+  const base = shape.matrix ? new DOMMatrix(shape.matrix) : new DOMMatrix().rotate(shape.rotation ?? 0);
+  base.e = shape.x;
+  base.f = shape.y;
+  return base;
+}
+
+function normalizeAngleDelta(deg: number) {
+  let d = deg % 360;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return d;
+}
+
 function shapeWorldBounds(s: Shape) {
-  const corners = [
-    { x: s.x, y: s.y },
-    { x: s.x + s.width, y: s.y },
-    { x: s.x + s.width, y: s.y + s.height },
-    { x: s.x, y: s.y + s.height },
+  const m = deriveMatrix(s);
+  return [
+    transformPoint(m, 0, 0),
+    transformPoint(m, s.width, 0),
+    transformPoint(m, s.width, s.height),
+    transformPoint(m, 0, s.height),
   ];
-  if (!s.rotation) return corners;
-  const cx = s.x + s.width / 2;
-  const cy = s.y + s.height / 2;
-  return corners.map((c) => rotatePoint(c.x, c.y, cx, cy, s.rotation));
+}
+
+function shapeWorldCorners(s: Shape) {
+  return shapeWorldBounds(s);
+}
+
+function shapeWorldCenter(s: Shape) {
+  const m = deriveMatrix(s);
+  return transformPoint(m, s.width / 2, s.height / 2);
 }
 
 function computeResizeBounds(

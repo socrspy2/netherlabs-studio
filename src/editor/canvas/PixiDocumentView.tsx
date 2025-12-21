@@ -232,9 +232,7 @@ function buildBaseDisplay(shape: Shape): PIXI.Container | null {
   }
 
   const g = new PIXI.Graphics();
-  g.x = shape.x;
-  g.y = shape.y;
-  g.rotation = degToRad(shape.rotation);
+  applyTransform(g, shape);
   g.alpha = shape.opacity;
   g.blendMode = toPixiBlendMode(shape.blendMode);
 
@@ -382,6 +380,23 @@ function applyFilters(display: PIXI.Container, shape: Shape) {
   if (blur > 0) {
     display.filters = [new PIXI.BlurFilter({ strength: blur, quality: 4, resolution: 1 }) as any];
   }
+}
+
+function applyTransform(display: PIXI.Container, shape: Shape) {
+  const m = deriveMatrix(shape);
+  const scaleX = Math.hypot(m.a, m.b) || 1;
+  const scaleY = Math.hypot(m.c, m.d) || 1;
+  const rotation = Math.atan2(m.b, m.a);
+  display.position.set(m.e, m.f);
+  display.scale.set(scaleX, scaleY);
+  (display as any).rotation = rotation;
+}
+
+function deriveMatrix(shape: Shape) {
+  const base = shape.matrix ? new DOMMatrix(shape.matrix) : new DOMMatrix().rotate(shape.rotation ?? 0);
+  base.e = shape.x;
+  base.f = shape.y;
+  return base;
 }
 
 function toPixiFill(fill: Fill) {

@@ -158,20 +158,13 @@ function initialDoc(): EditorDocument {
   text.width = 260;
   text.height = 140;
 
-  const frame = baseShape("rectangle", "Landing Frame", 120, 120);
-  frame.width = 960;
-  frame.height = 1200;
-  frame.fill = { enabled: false, kind: "solid", color: "#ffffff", opacity: 1 };
-  frame.stroke = { enabled: true, kind: "solid", color: "#1f2937", width: 1, align: "inside", dashed: false, opacity: 0.25 } as any;
-
   return {
     layers: [
-      { id: frame.id, kind: "shape", shape: frame },
       { id: rect.id, kind: "shape", shape: rect },
       { id: ellipse.id, kind: "shape", shape: ellipse },
       { id: text.id, kind: "shape", shape: text },
     ],
-    selection: [frame.id],
+    selection: [rect.id],
     tool: "select",
     viewport: { pan: { x: 120, y: 60 }, zoom: 1 },
     canvasBackground: { kind: "preset", value: "white" },

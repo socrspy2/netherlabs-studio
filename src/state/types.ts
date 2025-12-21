@@ -127,6 +127,7 @@ export type BaseShape = {
   width: number;
   height: number;
   rotation: number;
+  matrix?: DOMMatrix;
   opacity: number;
   visible: boolean;
   locked: boolean;
