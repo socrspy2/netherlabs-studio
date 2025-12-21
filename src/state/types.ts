@@ -19,12 +19,23 @@ export type ToolId =
 export type StrokeAlign = "center" | "inside" | "outside";
 
 export type Shadow = {
+  enabled?: boolean;
   x: number;
   y: number;
   blur: number;
   spread: number;
   color: string;
   opacity: number;
+};
+
+export type Glow = {
+  enabled: boolean;
+  mode: "outer" | "inner";
+  color: string;
+  opacity: number;
+  blur: number;
+  spread: number;
+  offset: { x: number; y: number };
 };
 
 export type GradientStop = {
@@ -123,6 +134,7 @@ export type BaseShape = {
   stroke: Stroke;
   radius: CornerRadius;
   shadow: Shadow | null;
+  glow?: Glow | null;
   effects?: Effects;
   blendMode?: LayerBlendMode;
 };
@@ -198,6 +210,13 @@ export type CanvasSize = {
   height: number;
 };
 
+export type GridSettings = {
+  size: number;
+  color: string;
+  visible: boolean;
+  magnetic: boolean;
+};
+
 export type EditorDocument = {
   layers: LayerNode[];
   selection: string[];
@@ -205,4 +224,5 @@ export type EditorDocument = {
   viewport: ViewportState;
   canvasBackground: CanvasBackground;
   canvasSize: CanvasSize;
+  grid: GridSettings;
 };

@@ -70,30 +70,30 @@ export function EditorShell() {
     >
       <TopBar />
       {preview ? (
-        <div style={{ flex: 1, minHeight: 0 }}>
+        <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
           <CanvasViewport />
         </div>
       ) : (
         <>
           <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
             {!leftCollapsed && (
-              <div style={{ width: leftWidth, minWidth: 240, maxWidth: 520 }}>
+              <div style={{ flex: `0 0 ${leftWidth}px`, minWidth: leftWidth, maxWidth: leftWidth, height: "100%", minHeight: 0, display: "flex" }}>
                 <LeftPanel />
               </div>
             )}
             <ResizeHandle
-              onDrag={(dx) => setLeftWidth((w) => clamp(w + dx, 240, 520))}
+              onDrag={(dx) => setLeftWidth((w) => clamp(w + dx, 240, 320))}
               onToggleCollapse={() => setLeftCollapsed((v) => !v)}
             />
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ flex: 1, minWidth: 0, height: "100%", minHeight: 0, display: "flex" }}>
               <CanvasViewport />
             </div>
             <ResizeHandle
-              onDrag={(dx) => setRightWidth((w) => clamp(w - dx, 260, 560))}
+              onDrag={(dx) => setRightWidth((w) => clamp(w - dx, 320, 420))}
               onToggleCollapse={() => setRightCollapsed((v) => !v)}
             />
             {!rightCollapsed && (
-              <div style={{ width: rightWidth, minWidth: 260, maxWidth: 560 }}>
+              <div style={{ flex: `0 0 ${rightWidth}px`, minWidth: rightWidth, maxWidth: rightWidth, height: "100%", minHeight: 0, display: "flex" }}>
                 <InspectorPanel />
               </div>
             )}

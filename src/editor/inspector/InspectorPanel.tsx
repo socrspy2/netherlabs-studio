@@ -9,11 +9,72 @@ export function InspectorPanel() {
   const node = flat.find((n) => n.kind === "shape" && n.id === selected) as any;
   const shape: Shape | null = node?.shape ?? null;
   const canvasSize = doc.canvasSize ?? { width: 1800, height: 1200 };
+  const requiredSections = React.useMemo(() => new Set(["canvas", "layout", "fill", "stroke", "corners"]), []);
+  const [hiddenSections, setHiddenSections] = React.useState<Set<string>>(() => new Set());
+  const [sectionMenuOpen, setSectionMenuOpen] = React.useState(false);
+  const sectionButtonRef = React.useRef<HTMLButtonElement | null>(null);
+  const sectionMenuRef = React.useRef<HTMLDivElement | null>(null);
   const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({
     export: true,
   });
 
   const toggle = (id: string) => setCollapsed((s) => ({ ...s, [id]: !s[id] }));
+  const toggleSectionVisibility = (id: string) => {
+    if (requiredSections.has(id)) return;
+    setHiddenSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const isSectionVisible = (id: string) => requiredSections.has(id) || !hiddenSections.has(id);
+
+  const sectionOptions = React.useMemo(
+    () => [
+      { id: "canvas", label: "Canvas", required: true },
+      { id: "layout", label: "Layout", required: true },
+      { id: "fill", label: "Fill", required: true },
+      { id: "stroke", label: "Stroke", required: true },
+      { id: "corners", label: "Corners", required: true },
+      { id: "dropShadow", label: "Drop Shadow" },
+      { id: "glow", label: "Glow" },
+      { id: "effects", label: "Effects" },
+      { id: "blend", label: "Blend" },
+      { id: "type", label: "Typography", hidden: shape?.type !== "text" },
+      { id: "export", label: "Export" },
+    ],
+    [shape?.type]
+  );
+  const shadow = shape?.shadow ?? { enabled: true, x: 0, y: 4, blur: 12, spread: 0, color: "#000000", opacity: 0.16 };
+  const glow = (shape as any)?.glow ?? {
+    enabled: false,
+    mode: "outer",
+    color: "#4f46e5",
+    opacity: 0.35,
+    blur: 16,
+    spread: 4,
+    offset: { x: 0, y: 0 },
+  };
+
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSectionMenuOpen(false);
+    };
+    const onClick = (e: MouseEvent) => {
+      if (!sectionMenuOpen) return;
+      const target = e.target as Node;
+      if (!sectionButtonRef.current?.contains(target) && !sectionMenuRef.current?.contains(target)) {
+        setSectionMenuOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onClick);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onClick);
+    };
+  }, [sectionMenuOpen]);
 
   return (
     <aside
@@ -26,75 +87,86 @@ export function InspectorPanel() {
         padding: 14,
         gap: 12,
         minHeight: 0,
-        overflow: "auto",
-        overscrollBehavior: "contain",
+        height: "100%",
+        overflow: "hidden",
+        width: "100%",
       }}
       onWheelCapture={(e) => e.stopPropagation()}
     >
-          <div style={{ fontWeight: 700, fontSize: 14 }}>Inspector</div>
-      {!shape && <div style={{ fontSize: 12, opacity: 0.7 }}>Select a layer to edit properties.</div>}
-
-      <Section title="Canvas" open={!collapsed.canvas} onToggle={() => toggle("canvas")}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {[
-            { label: "Checker", bg: { kind: "checkerboard" as const } },
-            { label: "White", bg: { kind: "preset" as const, value: "white" as const } },
-            { label: "Black", bg: { kind: "preset" as const, value: "black" as const } },
-            { label: "Blue", bg: { kind: "preset" as const, value: "blue" as const } },
-          ].map((p) => (
-            <button
-              key={p.label}
-              onClick={() => setCanvasBackground(p.bg)}
-              style={{
-                height: 32,
-                padding: "0 10px",
-                borderRadius: 10,
-                border: "1px solid var(--border)",
-                background: "var(--control)",
-                color: "var(--text)",
-                cursor: "pointer",
-                fontSize: 12,
-              }}
-            >
-              {p.label}
-            </button>
-          ))}
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-            <span style={{ opacity: 0.7 }}>Custom</span>
-            <input
-              type="color"
-              value={doc.canvasBackground.kind === "custom" ? doc.canvasBackground.color : "#0b1224"}
-              onChange={(e) => setCanvasBackground({ kind: "custom", color: e.target.value })}
-              style={{
-                height: 32,
-                width: 44,
-                borderRadius: 10,
-                border: "1px solid var(--border)",
-                background: "var(--control)",
-              }}
-            />
-          </label>
-        </div>
-        <div style={{ fontSize: 11, opacity: 0.65 }}>Canvas background is for editing only (not export).</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <LabeledSizeInput
-              label="Width"
-              value={canvasSize.width}
-              onChange={(next) => setCanvasSize({ ...canvasSize, width: next })}
-            />
-            <LabeledSizeInput
-              label="Height"
-              value={canvasSize.height}
-              onChange={(next) => setCanvasSize({ ...canvasSize, height: next })}
-            />
-            <div style={{ fontSize: 11, opacity: 0.65 }}>px</div>
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {[{ label: "Web", width: 1440, height: 900 }, { label: "Tablet", width: 1024, height: 768 }, { label: "Phone", width: 390, height: 844 }].map((t) => (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", position: "relative" }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>Inspector</div>
+            <div style={{ position: "relative" }}>
               <button
-                key={t.label}
-                onClick={() => setCanvasSize({ width: t.width, height: t.height })}
+                ref={sectionButtonRef}
+                onClick={() => setSectionMenuOpen((v) => !v)}
+                style={{
+                  height: 28,
+                  padding: "0 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "var(--control)",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+              >
+                Sections ▾
+              </button>
+              {sectionMenuOpen && (
+                <div
+                  ref={sectionMenuRef}
+                  style={{
+                    position: "absolute",
+                    right: 0,
+                    top: 32,
+                    background: "var(--panel)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 10,
+                    boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+                    padding: 10,
+                    minWidth: 200,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                    zIndex: 10,
+                  }}
+                >
+                  {sectionOptions
+                    .filter((s) => !s.hidden)
+                    .map((s) => (
+                      <label key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                        <input
+                          type="checkbox"
+                          disabled={s.required}
+                          checked={s.required || isSectionVisible(s.id)}
+                          onChange={() => toggleSectionVisibility(s.id)}
+                        />
+                        <span style={{ opacity: s.required ? 0.7 : 1 }}>
+                          {s.label}
+                          {s.required ? " (required)" : ""}
+                        </span>
+                      </label>
+                    ))}
+                </div>
+              )}
+            </div>
+          </div>
+          {!shape && <div style={{ fontSize: 12, opacity: 0.7 }}>Select a layer to edit properties.</div>}
+
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", paddingRight: 4, display: "flex", flexDirection: "column", gap: 12 }}>
+
+      {isSectionVisible("canvas") && (
+        <Section title="Canvas" open={!collapsed.canvas} onToggle={() => toggle("canvas")}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {[
+              { label: "Checker", bg: { kind: "checkerboard" as const } },
+              { label: "White", bg: { kind: "preset" as const, value: "white" as const } },
+              { label: "Black", bg: { kind: "preset" as const, value: "black" as const } },
+              { label: "Blue", bg: { kind: "preset" as const, value: "blue" as const } },
+            ].map((p) => (
+              <button
+                key={p.label}
+                onClick={() => setCanvasBackground(p.bg)}
                 style={{
                   height: 32,
                   padding: "0 10px",
@@ -106,134 +178,215 @@ export function InspectorPanel() {
                   fontSize: 12,
                 }}
               >
-                {t.label} {t.width}×{t.height}
+                {p.label}
               </button>
             ))}
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+              <span style={{ opacity: 0.7 }}>Custom</span>
+              <input
+                type="color"
+                value={doc.canvasBackground.kind === "custom" ? doc.canvasBackground.color : "#0b1224"}
+                onChange={(e) => setCanvasBackground({ kind: "custom", color: e.target.value })}
+                style={{
+                  height: 32,
+                  width: 44,
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "var(--control)",
+                }}
+              />
+            </label>
           </div>
-        </div>
-      </Section>
+          <div style={{ fontSize: 11, opacity: 0.65 }}>Canvas background is for editing only (not export).</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <LabeledSizeInput
+                label="Width"
+                value={canvasSize.width}
+                onChange={(next) => setCanvasSize({ ...canvasSize, width: next })}
+              />
+              <LabeledSizeInput
+                label="Height"
+                value={canvasSize.height}
+                onChange={(next) => setCanvasSize({ ...canvasSize, height: next })}
+              />
+              <div style={{ fontSize: 11, opacity: 0.65 }}>px</div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[{ label: "Web", width: 1440, height: 900 }, { label: "Tablet", width: 1024, height: 768 }, { label: "Phone", width: 390, height: 844 }].map((t) => (
+                <button
+                  key={t.label}
+                  onClick={() => setCanvasSize({ width: t.width, height: t.height })}
+                  style={{
+                    height: 32,
+                    padding: "0 10px",
+                    borderRadius: 10,
+                    border: "1px solid var(--border)",
+                    background: "var(--control)",
+                    color: "var(--text)",
+                    cursor: "pointer",
+                    fontSize: 12,
+                  }}
+                >
+                  {t.label} {t.width}×{t.height}
+                </button>
+              ))}
+            </div>
+          </div>
+        </Section>
+      )}
 
       {shape && (
         <>
-          <Section title="Layout" open={!collapsed.layout} onToggle={() => toggle("layout")}>
-            <Grid>
-              <LabeledInput label="X" type="number" value={shape.x} field="x" />
-              <LabeledInput label="Y" type="number" value={shape.y} field="y" />
-              <LabeledInput label="W" type="number" value={shape.width} field="width" />
-              <LabeledInput label="H" type="number" value={shape.height} field="height" />
-              <LabeledInput label="Rotate" type="number" value={shape.rotation} field="rotation" />
-              <LabeledInput label="Opacity" type="number" value={shape.opacity * 100} field="opacityPercent" />
-            </Grid>
-          </Section>
+          {isSectionVisible("layout") && (
+            <Section title="Layout" open={!collapsed.layout} onToggle={() => toggle("layout")}>
+              <Grid>
+                <LabeledInput label="X" type="number" value={shape.x} field="x" />
+                <LabeledInput label="Y" type="number" value={shape.y} field="y" />
+                <LabeledInput label="W" type="number" value={shape.width} field="width" />
+                <LabeledInput label="H" type="number" value={shape.height} field="height" />
+                <LabeledInput label="Rotate" type="number" value={shape.rotation} field="rotation" />
+                <LabeledInput label="Opacity" type="number" value={shape.opacity * 100} field="opacityPercent" />
+              </Grid>
+            </Section>
+          )}
 
-          <Section title="Fill" open={!collapsed.fill} onToggle={() => toggle("fill")}>
-            <ToggleRow field="fill.enabled" value={shape.fill.enabled} />
-            <SelectRow
-              label="Type"
-              value={shape.fill.kind}
-              field="fill.kind"
-              options={["solid", "linear"]}
-            />
-            {shape.fill.kind === "solid" ? (
-              <>
-                <LabeledInput label="Color" type="color" value={shape.fill.color} field="fill.color" />
-                <LabeledInput
-                  label="Alpha"
-                  type="number"
-                  value={shape.fill.opacity * 100}
-                  field="fill.opacityPercent"
-                />
-              </>
-            ) : (
-              <>
-                <LabeledInput label="Angle" type="number" value={shape.fill.angle} field="fill.angle" />
-                <GradientStopsEditor field="fill.stops" stops={shape.fill.stops} />
-              </>
-            )}
-          </Section>
-
-          <Section title="Stroke" open={!collapsed.stroke} onToggle={() => toggle("stroke")}>
-            <ToggleRow field="stroke.enabled" value={shape.stroke.enabled} />
-            <Grid>
+          {isSectionVisible("fill") && (
+            <Section title="Fill" open={!collapsed.fill} onToggle={() => toggle("fill")}>
+              <ToggleRow field="fill.enabled" value={shape.fill.enabled} />
               <SelectRow
                 label="Type"
-                value={shape.stroke.kind}
-                field="stroke.kind"
+                value={shape.fill.kind}
+                field="fill.kind"
                 options={["solid", "linear"]}
               />
-              {"kind" in shape.stroke && shape.stroke.kind === "solid" ? (
-                <LabeledInput label="Color" type="color" value={(shape.stroke as any).color} field="stroke.color" />
+              {shape.fill.kind === "solid" ? (
+                <>
+                  <LabeledInput label="Color" type="color" value={shape.fill.color} field="fill.color" />
+                  <LabeledInput
+                    label="Alpha"
+                    type="number"
+                    value={shape.fill.opacity * 100}
+                    field="fill.opacityPercent"
+                  />
+                </>
               ) : (
                 <>
-                  <LabeledInput label="Angle" type="number" value={(shape.stroke as any).angle ?? 0} field="stroke.angle" />
-                  <GradientStopsEditor field="stroke.stops" stops={(shape.stroke as any).stops ?? []} />
+                  <LabeledInput label="Angle" type="number" value={shape.fill.angle} field="fill.angle" />
+                  <GradientStopsEditor field="fill.stops" stops={shape.fill.stops} />
                 </>
               )}
-              <LabeledInput label="Width" type="number" value={shape.stroke.width} field="stroke.width" />
-              <SelectRow label="Align" value={shape.stroke.align} field="stroke.align" options={["inside", "center", "outside"]} />
-              <ToggleRow label="Dashed" field="stroke.dashed" value={shape.stroke.dashed} />
-            </Grid>
-          </Section>
+            </Section>
+          )}
 
-          <Section title="Corners" open={!collapsed.corners} onToggle={() => toggle("corners")}>
-            <Grid>
-              <LabeledInput label="TL" type="number" value={shape.radius.tl} field="radius.tl" />
-              <LabeledInput label="TR" type="number" value={shape.radius.tr} field="radius.tr" />
-              <LabeledInput label="BR" type="number" value={shape.radius.br} field="radius.br" />
-              <LabeledInput label="BL" type="number" value={shape.radius.bl} field="radius.bl" />
-            </Grid>
-          </Section>
+          {isSectionVisible("stroke") && (
+            <Section title="Stroke" open={!collapsed.stroke} onToggle={() => toggle("stroke")}>
+              <ToggleRow field="stroke.enabled" value={shape.stroke.enabled} />
+              <Grid>
+                <SelectRow
+                  label="Type"
+                  value={shape.stroke.kind}
+                  field="stroke.kind"
+                  options={["solid", "linear"]}
+                />
+                {"kind" in shape.stroke && shape.stroke.kind === "solid" ? (
+                  <LabeledInput label="Color" type="color" value={(shape.stroke as any).color} field="stroke.color" />
+                ) : (
+                  <>
+                    <LabeledInput label="Angle" type="number" value={(shape.stroke as any).angle ?? 0} field="stroke.angle" />
+                    <GradientStopsEditor field="stroke.stops" stops={(shape.stroke as any).stops ?? []} />
+                  </>
+                )}
+                <LabeledInput label="Width" type="number" value={shape.stroke.width} field="stroke.width" />
+                <SelectRow label="Align" value={shape.stroke.align} field="stroke.align" options={["inside", "center", "outside"]} />
+                <ToggleRow label="Dashed" field="stroke.dashed" value={shape.stroke.dashed} />
+              </Grid>
+            </Section>
+          )}
 
-          <Section title="Shadow" open={!collapsed.shadow} onToggle={() => toggle("shadow")}>
-            <Grid>
-              <LabeledInput label="X" type="number" value={shape.shadow?.x ?? 0} field="shadow.x" />
-              <LabeledInput label="Y" type="number" value={shape.shadow?.y ?? 0} field="shadow.y" />
-              <LabeledInput label="Blur" type="number" value={shape.shadow?.blur ?? 0} field="shadow.blur" />
-              <LabeledInput label="Spread" type="number" value={shape.shadow?.spread ?? 0} field="shadow.spread" />
-              <LabeledInput label="Color" type="color" value={shape.shadow?.color ?? "#000000"} field="shadow.color" />
-              <LabeledInput label="Opacity" type="number" value={(shape.shadow?.opacity ?? 0) * 100} field="shadow.opacityPercent" />
-            </Grid>
-          </Section>
+          {isSectionVisible("corners") && (
+            <Section title="Corners" open={!collapsed.corners} onToggle={() => toggle("corners")}>
+              <Grid>
+                <LabeledInput label="TL" type="number" value={shape.radius.tl} field="radius.tl" />
+                <LabeledInput label="TR" type="number" value={shape.radius.tr} field="radius.tr" />
+                <LabeledInput label="BR" type="number" value={shape.radius.br} field="radius.br" />
+                <LabeledInput label="BL" type="number" value={shape.radius.bl} field="radius.bl" />
+              </Grid>
+            </Section>
+          )}
 
-          <Section title="Effects" open={!collapsed.effects} onToggle={() => toggle("effects")}>
-            <Grid>
-              <LabeledInput label="Blur" type="number" value={shape.effects?.blur ?? 0} field="effects.blur" />
-              <LabeledInput label="Backdrop blur" type="number" value={shape.effects?.backgroundBlur ?? 0} field="effects.backgroundBlur" />
-            </Grid>
-          </Section>
+          {isSectionVisible("dropShadow") && (
+            <Section title="Drop Shadow" open={!collapsed.dropShadow} onToggle={() => toggle("dropShadow")}>
+              <ToggleRow label="Enabled" field="shadow.enabled" value={shadow.enabled !== false} />
+              <Grid>
+                <LabeledInput label="X" type="number" value={shadow.x ?? 0} field="shadow.x" />
+                <LabeledInput label="Y" type="number" value={shadow.y ?? 0} field="shadow.y" />
+                <LabeledInput label="Blur" type="number" value={shadow.blur ?? 0} field="shadow.blur" />
+                <LabeledInput label="Spread" type="number" value={shadow.spread ?? 0} field="shadow.spread" />
+                <LabeledInput label="Color" type="color" value={shadow.color ?? "#000000"} field="shadow.color" />
+                <LabeledInput label="Opacity" type="number" value={(shadow.opacity ?? 0) * 100} field="shadow.opacityPercent" />
+              </Grid>
+            </Section>
+          )}
 
-          <Section title="Blend" open={!collapsed.blend} onToggle={() => toggle("blend")}>
-            <SelectRow
-              label="Mode"
-              value={(shape.blendMode ?? "normal") as any}
-              field="blendMode"
-              options={[
-                "normal",
-                "multiply",
-                "screen",
-                "overlay",
-                "darken",
-                "lighten",
-                "color-dodge",
-                "color-burn",
-                "linear-dodge",
-                "linear-burn",
-                "hard-light",
-                "soft-light",
-                "difference",
-                "exclusion",
-                "hue",
-                "saturation",
-                "color",
-                "luminosity",
-                "add",
-                "subtract",
-                "divide",
-              ]}
-            />
-          </Section>
+          {isSectionVisible("glow") && (
+            <Section title="Glow" open={!collapsed.glow} onToggle={() => toggle("glow")}>
+              <ToggleRow label="Enabled" field="glow.enabled" value={glow.enabled ?? false} />
+              <SelectRow label="Mode" value={glow.mode ?? "outer"} field="glow.mode" options={["outer", "inner"]} />
+              <Grid>
+                <LabeledInput label="Color" type="color" value={glow.color ?? "#4f46e5"} field="glow.color" />
+                <LabeledInput label="Opacity" type="number" value={(glow.opacity ?? 0) * 100} field="glow.opacityPercent" />
+                <LabeledInput label="Blur" type="number" value={glow.blur ?? 0} field="glow.blur" />
+                <LabeledInput label="Spread" type="number" value={glow.spread ?? 0} field="glow.spread" />
+                <LabeledInput label="Offset X" type="number" value={glow.offset?.x ?? 0} field="glow.offset.x" />
+                <LabeledInput label="Offset Y" type="number" value={glow.offset?.y ?? 0} field="glow.offset.y" />
+              </Grid>
+            </Section>
+          )}
 
-          {shape.type === "text" && (
+          {isSectionVisible("effects") && (
+            <Section title="Effects" open={!collapsed.effects} onToggle={() => toggle("effects")}>
+              <Grid>
+                <LabeledInput label="Blur" type="number" value={shape.effects?.blur ?? 0} field="effects.blur" />
+                <LabeledInput label="Backdrop blur" type="number" value={shape.effects?.backgroundBlur ?? 0} field="effects.backgroundBlur" />
+              </Grid>
+            </Section>
+          )}
+
+          {isSectionVisible("blend") && (
+            <Section title="Blend" open={!collapsed.blend} onToggle={() => toggle("blend")}>
+              <SelectRow
+                label="Mode"
+                value={(shape.blendMode ?? "normal") as any}
+                field="blendMode"
+                options={[
+                  "normal",
+                  "multiply",
+                  "screen",
+                  "overlay",
+                  "darken",
+                  "lighten",
+                  "color-dodge",
+                  "color-burn",
+                  "linear-dodge",
+                  "linear-burn",
+                  "hard-light",
+                  "soft-light",
+                  "difference",
+                  "exclusion",
+                  "hue",
+                  "saturation",
+                  "color",
+                  "luminosity",
+                  "add",
+                  "subtract",
+                  "divide",
+                ]}
+              />
+            </Section>
+          )}
+
+          {shape.type === "text" && isSectionVisible("type") && (
             <Section title="Typography" open={!collapsed.type} onToggle={() => toggle("type")}>
               <Grid>
                 {(() => {
@@ -271,11 +424,14 @@ export function InspectorPanel() {
             </Section>
           )}
 
-          <Section title="Export" open={!collapsed.export} onToggle={() => toggle("export")}>
-            <div style={{ fontSize: 12, opacity: 0.75 }}>Export pipeline comes next (SVG/PNG/JSON).</div>
-          </Section>
+          {isSectionVisible("export") && (
+            <Section title="Export" open={!collapsed.export} onToggle={() => toggle("export")}>
+              <div style={{ fontSize: 12, opacity: 0.75 }}>Export pipeline comes next (SVG/PNG/JSON).</div>
+            </Section>
+          )}
         </>
       )}
+      </div>
     </aside>
   );
 }
@@ -301,6 +457,7 @@ function Section({
         display: "flex",
         flexDirection: "column",
         gap: 8,
+        width: "100%",
       }}
     >
       <button
@@ -385,6 +542,11 @@ function LabeledInput({
       "shadow.blur",
       "shadow.spread",
       "shadow.opacityPercent",
+      "glow.blur",
+      "glow.spread",
+      "glow.opacityPercent",
+      "glow.offset.x",
+      "glow.offset.y",
       "effects.blur",
       "effects.backgroundBlur",
       "fontSize",
@@ -409,6 +571,10 @@ function LabeledInput({
       if (field === "shadow.opacityPercent") {
         parsed = parsed / 100;
         targetField = "shadow.opacity";
+      }
+      if (field === "glow.opacityPercent") {
+        parsed = parsed / 100;
+        targetField = "glow.opacity";
       }
       if (field === "textFill.opacityPercent") {
         parsed = parsed / 100;

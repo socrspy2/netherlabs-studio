@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Ruler, Sparkle } from "lucide-react";
-import { useEditor, createShapeForTool } from "../../state/editorStore";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Ruler, Sparkle, X } from "lucide-react";
+import { DEFAULT_GRID, useEditor, createShapeForTool } from "../../state/editorStore";
 import { LayerNode, PathShape, Shape } from "../../state/types";
 import { PixiDocumentView } from "./PixiDocumentView";
+import { createSnapManager } from "./snap";
 
 type DragMode = "none" | "pan" | "marquee" | "creating" | "move" | "resize" | "rotate";
 
@@ -10,10 +11,26 @@ type Marquee = { x: number; y: number; w: number; h: number };
 const DEFAULT_HANDLE_LEN = 36;
 
 export function CanvasViewport() {
-  const { doc, preview, checkpoint, applyShapePatches, setSelection, clearSelection, updateViewport, createShape, setTool } =
-    useEditor();
+  const {
+    doc,
+    preview,
+    checkpoint,
+    applyShapePatches,
+    setSelection,
+    clearSelection,
+    updateViewport,
+    createShape,
+    setTool,
+    setGrid,
+  } = useEditor();
+  const grid = doc.grid ?? DEFAULT_GRID;
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const snapper = useMemo(() => createSnapManager(grid), [grid]);
+  const gridPatternId = useMemo(() => `grid-${Math.random().toString(36).slice(2)}`, []);
   const [dragMode, setDragMode] = useState<DragMode>("none");
+  const [gridMenuOpen, setGridMenuOpen] = useState(false);
+  const gridButtonRef = useRef<HTMLButtonElement | null>(null);
+  const gridMenuRef = useRef<HTMLDivElement | null>(null);
   const [marquee, setMarquee] = useState<Marquee | null>(null);
   const [activeShape, setActiveShape] = useState<Shape | null>(null);
   const [penDraft, setPenDraft] = useState<{ points: PathShape["points"] } | null>(null);
@@ -32,7 +49,6 @@ export function CanvasViewport() {
   }>({ shapes: [], bounds: null });
   const resizeDir = useRef<string | null>(null);
   const rotateCenter = useRef<{ x: number; y: number } | null>(null);
-  const dragStartClient = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const rotateStartAngle = useRef<number>(0);
   const resizeStart = useRef<{
     bounds: { x: number; y: number; width: number; height: number };
@@ -146,6 +162,24 @@ export function CanvasViewport() {
     };
   }, [doc.tool, penDraft]);
 
+  useEffect(() => {
+    if (!gridMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setGridMenuOpen(false);
+    };
+    const onClick = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (gridButtonRef.current?.contains(t) || gridMenuRef.current?.contains(t)) return;
+      setGridMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onClick);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onClick);
+    };
+  }, [gridMenuOpen]);
+
   const togglePointSmooth = (path: PathShape, index: number): PathShape => {
     const next = structuredClone(path);
     const pt = next.points[index];
@@ -200,14 +234,39 @@ export function CanvasViewport() {
     return { x, y };
   };
 
+  const recenterViewport = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const size = doc.canvasSize || { width: 1800, height: 1200 };
+    const content = contentBounds(doc.layers) ?? { x: 0, y: 0, width: size.width, height: size.height };
+    const viewCenter = { x: el.clientWidth / 2, y: el.clientHeight / 2 };
+    const contentCenter = { x: content.x + content.width / 2, y: content.y + content.height / 2 };
+    updateViewport({
+      pan: {
+        x: viewCenter.x - contentCenter.x * doc.viewport.zoom,
+        y: viewCenter.y - contentCenter.y * doc.viewport.zoom,
+      },
+    });
+  }, [doc.canvasSize?.height, doc.canvasSize?.width, doc.layers, doc.viewport.zoom, updateViewport]);
+
+  useEffect(() => {
+    recenterViewport();
+  }, [recenterViewport]);
+
+  // force recenter on mount/rehydrate to avoid lost canvas
+  useEffect(() => {
+    recenterViewport();
+  }, [recenterViewport]);
+
   const handlePointerDown = (e: React.PointerEvent) => {
     if (preview) return;
     e.preventDefault();
-    const world = toWorld(e.clientX, e.clientY);
+    const worldRaw = toWorld(e.clientX, e.clientY);
+    const world = snapper.snapPoint(worldRaw, { altPressed: e.altKey });
+    const hitWorld = worldRaw;
     startPoint.current = world;
-    dragStartClient.current = { x: e.clientX, y: e.clientY };
 
-    const isPan = doc.tool === "hand" || e.button === 1 || spacePressed.current;
+    const isPan = doc.tool === "hand";
     if (isPan) {
       (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
       setDragMode("pan");
@@ -225,8 +284,8 @@ export function CanvasViewport() {
         const endPt = selectedPath.points[selectedPath.points.length - 1];
         const end = { x: selectedPath.x + endPt.x, y: selectedPath.y + endPt.y };
         const hitRadius = 10 / doc.viewport.zoom;
-        const dStart = Math.hypot(world.x - start.x, world.y - start.y);
-        const dEnd = Math.hypot(world.x - end.x, world.y - end.y);
+        const dStart = Math.hypot(hitWorld.x - start.x, hitWorld.y - start.y);
+        const dEnd = Math.hypot(hitWorld.x - end.x, hitWorld.y - end.y);
 
         if (!penExtend && (dStart <= hitRadius || dEnd <= hitRadius)) {
           setPenExtend({ shapeId: selectedPath.id, at: dStart <= dEnd ? "start" : "end" });
@@ -286,7 +345,7 @@ export function CanvasViewport() {
         const nextPoints = prev?.points ? [...prev.points] : [];
         if (nextPoints.length >= 3) {
           const first = nextPoints[0];
-          const dist = Math.hypot(first.x - world.x, first.y - world.y);
+          const dist = Math.hypot(first.x - hitWorld.x, first.y - hitWorld.y);
           if (dist <= 10 / doc.viewport.zoom) {
             commitPenDraft(nextPoints, true);
             return null;
@@ -301,7 +360,7 @@ export function CanvasViewport() {
     }
 
     if (doc.tool === "direction") {
-      const handleHit = hitPathHandle(doc.layers, world, doc.viewport.zoom);
+      const handleHit = hitPathHandle(doc.layers, hitWorld, doc.viewport.zoom);
       if (handleHit) {
         const path = findPathById(doc.layers, handleHit.shapeId);
         if (!path || !containerRef.current) return;
@@ -332,7 +391,7 @@ export function CanvasViewport() {
       }
     }
 
-    const shapeUnder = hitTest(doc.layers, world.x, world.y);
+    const shapeUnder = hitTest(doc.layers, hitWorld.x, hitWorld.y);
 
     // creation tools
     if (["rectangle", "ellipse", "triangle", "trapezoid", "star", "polygon", "wave", "arrow", "line", "text", "frame"].includes(doc.tool)) {
@@ -354,7 +413,7 @@ export function CanvasViewport() {
     if (doc.tool === "select" || doc.tool === "direction") {
       // auto-switch to direction tool on anchor/handle/path segment hit when in select
       if (doc.tool === "select") {
-        const handleHit = hitPathHandle(doc.layers, world, doc.viewport.zoom);
+        const handleHit = hitPathHandle(doc.layers, hitWorld, doc.viewport.zoom);
         if (handleHit) {
           const path = findPathById(doc.layers, handleHit.shapeId);
           if (path && containerRef.current) {
@@ -383,7 +442,7 @@ export function CanvasViewport() {
             return;
           }
         }
-        const segmentHit = hitPathSegment(doc.layers, world, doc.viewport.zoom);
+        const segmentHit = hitPathSegment(doc.layers, hitWorld, doc.viewport.zoom);
         if (segmentHit) {
           const path = findPathById(doc.layers, segmentHit.shapeId);
           if (path && containerRef.current) {
@@ -433,7 +492,6 @@ export function CanvasViewport() {
         (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
         checkpoint();
         dragSnapshot.current = { shapes: selectedShapes, bounds: selectionBounds };
-        dragStartClient.current = { x: e.clientX, y: e.clientY };
         setDragMode("move");
         return;
       } else {
@@ -448,7 +506,8 @@ export function CanvasViewport() {
   const handlePointerMove = (e: React.PointerEvent) => {
     if (preview) return;
     if (!containerRef.current) return;
-    const world = toWorld(e.clientX, e.clientY);
+    const worldRaw = toWorld(e.clientX, e.clientY);
+    const world = snapper.snapPoint(worldRaw, { altPressed: e.altKey });
     const dx = world.x - startPoint.current.x;
     const dy = world.y - startPoint.current.y;
 
@@ -605,15 +664,15 @@ export function CanvasViewport() {
     }
 
     if (dragMode === "move") {
-      const snap = e.shiftKey ? 10 : 1;
-      const totalDx = (e.clientX - dragStartClient.current.x) / doc.viewport.zoom;
-      const totalDy = (e.clientY - dragStartClient.current.y) / doc.viewport.zoom;
-      const snappedDx = snapTo(totalDx, snap);
-      const snappedDy = snapTo(totalDy, snap);
+      const totalDx = world.x - startPoint.current.x;
+      const totalDy = world.y - startPoint.current.y;
       applyShapePatches(
         dragSnapshot.current.shapes.map((s) => ({
           id: s.id,
-          changes: { x: snapTo(s.x + snappedDx, 1), y: snapTo(s.y + snappedDy, 1) },
+          changes: {
+            x: snapper.snapValue(s.x + totalDx, { altPressed: e.altKey }),
+            y: snapper.snapValue(s.y + totalDy, { altPressed: e.altKey }),
+          },
         })),
         false
       );
@@ -628,7 +687,8 @@ export function CanvasViewport() {
         uniform: e.shiftKey,
         fromCenter: e.altKey,
       });
-      dragSnapshot.current.bounds = nextBounds;
+      const snappedBounds = snapper.snapRect(nextBounds, { altPressed: e.altKey });
+      dragSnapshot.current.bounds = snappedBounds;
 
       applyShapePatches(
         start.shapes.map((s) => {
@@ -636,10 +696,10 @@ export function CanvasViewport() {
           const ry = (s.y - start.bounds.y) / Math.max(1, start.bounds.height);
           const rw = s.width / Math.max(1, start.bounds.width);
           const rh = s.height / Math.max(1, start.bounds.height);
-          const newX = nextBounds.x + rx * nextBounds.width;
-          const newY = nextBounds.y + ry * nextBounds.height;
-          const newW = Math.max(4, nextBounds.width * rw);
-          const newH = Math.max(4, nextBounds.height * rh);
+          const newX = snappedBounds.x + rx * snappedBounds.width;
+          const newY = snappedBounds.y + ry * snappedBounds.height;
+          const newW = Math.max(4, snappedBounds.width * rw);
+          const newH = Math.max(4, snappedBounds.height * rh);
 
           if (s.type === "path") {
             const startPath = s as PathShape;
@@ -728,14 +788,153 @@ export function CanvasViewport() {
   const zoomLabel = `${Math.round(doc.viewport.zoom * 100)}%`;
   const paperBackground = getCanvasPaperStyle(doc.canvasBackground);
   const canvasSize = doc.canvasSize || { width: 1800, height: 1200 };
+  const gridStep = Math.max(1, grid.size || 1);
+  const majorEvery = 4;
+  const majorStep = gridStep * majorEvery;
 
   return (
-    <div style={{ position: "relative", minHeight: 0, height: "100%", background: "var(--canvas)", display: "flex", flexDirection: "column" }}>
-      <div style={{ padding: 12, display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--control)", padding: "6px 10px", borderRadius: 10, border: "1px solid var(--border)" }}>
-          <Ruler size={14} />
-          <span style={{ fontSize: 12, opacity: 0.8 }}>Snap 10px grid</span>
+    <div
+      style={{
+        position: "relative",
+        minHeight: "calc(100vh - 80px)",
+        height: "100%",
+        background: "var(--canvas)",
+        display: "flex",
+        flexDirection: "column",
+        flex: "1 1 auto",
+      }}
+    >
+      <div style={{ padding: 12, display: "flex", alignItems: "center", gap: 10, position: "relative" }}>
+        <div style={{ position: "relative" }}>
+          <button
+            ref={gridButtonRef}
+            onClick={() => setGridMenuOpen((v) => !v)}
+            style={{
+              height: 34,
+              padding: "0 12px",
+              borderRadius: 10,
+              border: "1px solid var(--border)",
+              background: "var(--control)",
+              color: "var(--text)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              minWidth: 120,
+            }}
+            title="Grid settings"
+          >
+            <Ruler size={14} />
+            <span style={{ fontSize: 12, fontWeight: 700 }}>Grid</span>
+            <span style={{ fontSize: 11, opacity: 0.7, marginLeft: "auto" }}>
+              {grid.size}px · {grid.magnetic ? "Snap on" : "Snap off"}
+            </span>
+          </button>
+          {gridMenuOpen && (
+            <div
+              ref={gridMenuRef}
+              style={{
+                position: "absolute",
+                top: 42,
+                left: 0,
+                background: "var(--panel-strong)",
+                border: "1px solid var(--border)",
+                borderRadius: 12,
+                boxShadow: "0 14px 50px rgba(0,0,0,0.35)",
+                padding: 12,
+                minWidth: 260,
+                zIndex: 30,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <div style={{ fontWeight: 700, fontSize: 12 }}>Grid options</div>
+                <button
+                  onClick={() => setGridMenuOpen(false)}
+                  style={{
+                    height: 28,
+                    width: 28,
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--control)",
+                    color: "var(--text)",
+                    display: "grid",
+                    placeItems: "center",
+                    cursor: "pointer",
+                  }}
+                  aria-label="Close grid menu"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 6 }}>Grid size</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {Array.from({ length: 10 }, (_, i) => i + 1).map((size) => (
+                      <button
+                        key={size}
+                        onClick={() => setGrid({ size })}
+                        style={{
+                          height: 30,
+                          padding: "0 8px",
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
+                          background: grid.size === size ? "var(--selection)" : "var(--control)",
+                          color: "var(--text)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {size}px
+                      </button>
+                    ))}
+                    <input
+                      type="number"
+                      min={1}
+                      value={grid.size}
+                      onChange={(e) => setGrid({ size: Number(e.target.value) || 1 })}
+                      style={{
+                        height: 32,
+                        width: 80,
+                        borderRadius: 8,
+                        border: "1px solid var(--border)",
+                        background: "var(--control)",
+                        color: "var(--text)",
+                        padding: "0 8px",
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
+                  <span style={{ minWidth: 80, opacity: 0.8 }}>Grid color</span>
+                  <input
+                    type="color"
+                    value={grid.color}
+                    onChange={(e) => setGrid({ color: e.target.value })}
+                    style={{
+                      height: 32,
+                      width: 60,
+                      borderRadius: 8,
+                      border: "1px solid var(--border)",
+                      background: "var(--control)",
+                    }}
+                  />
+                </label>
+
+                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
+                  <input type="checkbox" checked={grid.visible} onChange={(e) => setGrid({ visible: e.target.checked })} />
+                  <span>Show grid</span>
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
+                  <input type="checkbox" checked={grid.magnetic} onChange={(e) => setGrid({ magnetic: e.target.checked })} />
+                  <span>Magnetic snap</span>
+                </label>
+              </div>
+            </div>
+          )}
         </div>
+
         <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--control)", padding: "6px 10px", borderRadius: 10, border: "1px solid var(--border)" }}>
           <Sparkle size={14} />
           <span style={{ fontSize: 12, opacity: 0.8 }}>Smart select & handles</span>
@@ -748,12 +947,14 @@ export function CanvasViewport() {
         style={{
           position: "relative",
           overflow: "hidden",
-          background: "var(--canvas)",
+          background: "#0b1224",
           borderRadius: 16,
           margin: 12,
           border: "1px solid var(--border)",
-          minHeight: 0,
-          flex: 1,
+          boxShadow: "inset 0 0 0 2px rgba(255,255,255,0.06), 0 10px 40px rgba(0,0,0,0.25)",
+          minHeight: 600,
+          height: "calc(100vh - 160px)",
+          flex: "1 1 auto",
           touchAction: "none",
           userSelect: "none",
           WebkitUserSelect: "none",
@@ -765,36 +966,34 @@ export function CanvasViewport() {
         onDragOver={(e) => {
           e.preventDefault();
         }}
-        onDrop={async (e) => {
-          e.preventDefault();
-          const file = e.dataTransfer.files?.[0];
-          if (!file) return;
-          if (!file.type.startsWith("image/")) return;
-          const world = toWorld(e.clientX, e.clientY);
-          const src = await readFileAsDataURL(file);
-          const dims = await probeImageSize(src);
-          const maxW = 520;
-          const w = Math.min(maxW, dims.width || 320);
-          const h = dims.width ? (dims.height / dims.width) * w : 240;
-          const base = createShapeForTool("rectangle" as any, { x: world.x, y: world.y }) as any;
-          const imageShape = {
-            ...base,
-            id: crypto.randomUUID(),
-            type: "image",
-            name: file.name,
-            x: world.x,
-            y: world.y,
-            width: Math.max(20, w),
-            height: Math.max(20, h),
-            src,
-          };
-          createShape(imageShape);
-        }}
-      >
+      onDrop={async (e) => {
+        e.preventDefault();
+        const file = e.dataTransfer.files?.[0];
+        if (!file) return;
+        if (!file.type.startsWith("image/")) return;
+        const world = snapper.snapPoint(toWorld(e.clientX, e.clientY));
+        const src = await readFileAsDataURL(file);
+        const dims = await probeImageSize(src);
+        const maxW = 520;
+        const w = Math.min(maxW, dims.width || 320);
+        const h = dims.width ? (dims.height / dims.width) * w : 240;
+        const base = createShapeForTool("rectangle" as any, { x: world.x, y: world.y }) as any;
+        const imageShape = {
+          ...base,
+          id: crypto.randomUUID(),
+          type: "image",
+          name: file.name,
+          x: world.x,
+          y: world.y,
+          width: Math.max(20, w),
+          height: Math.max(20, h),
+          src,
+        };
+        createShape(imageShape);
+      }}
+    >
+        {/* background + grid behind content */}
         <div style={{ position: "absolute", inset: 0, ...paperBackground, pointerEvents: "none" }} />
-        <PixiDocumentView />
-
-        {/* non-interactive overlay (grid + previews) */}
         <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
           <div
             style={{
@@ -803,46 +1002,22 @@ export function CanvasViewport() {
               transform: `translate(${doc.viewport.pan.x}px, ${doc.viewport.pan.y}px) scale(${doc.viewport.zoom})`,
               transformOrigin: "0 0",
             }}
-          >
-            <svg width={canvasSize.width} height={canvasSize.height} style={{ overflow: "visible" }}>
-              <defs>
-                <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            >
+              <svg width={canvasSize.width} height={canvasSize.height} style={{ overflow: "visible" }}>
+                <defs>
+                <pattern id={gridPatternId} width="40" height="40" patternUnits="userSpaceOnUse">
                   <rect width="40" height="40" fill="none" stroke="var(--border)" strokeWidth="1" opacity={0.3} />
                   <rect width="10" height="10" fill="none" stroke="var(--border)" strokeWidth="0.5" opacity={0.18} />
                 </pattern>
               </defs>
-              <rect width={canvasSize.width} height={canvasSize.height} fill="url(#grid)" />
-
-              {activeShape && <PreviewShapeOutline shape={activeShape} />}
-              {doc.tool === "pen" && penDraft?.points?.length ? (
-                <>
-                  <path
-                    d={pathFromDraft(penDraft.points)}
-                    fill="none"
-                    stroke="var(--accent)"
-                    strokeOpacity={0.85}
-                    strokeWidth={2}
-                    strokeDasharray="6 4"
-                  />
-                  {penDraft.points.map((p, idx) => (
-                    <circle key={idx} cx={p.x} cy={p.y} r={4} fill="var(--accent)" stroke="var(--bg)" strokeWidth={1} />
-                  ))}
-                </>
-              ) : null}
-              {marquee && (
-                <rect
-                  x={Math.min(marquee.x, marquee.x + marquee.w)}
-                  y={Math.min(marquee.y, marquee.y + marquee.h)}
-                  width={Math.abs(marquee.w)}
-                  height={Math.abs(marquee.h)}
-                  fill="var(--selection)"
-                  stroke="var(--accent)"
-                  strokeDasharray="6 4"
-                />
-              )}
+              <rect width={canvasSize.width} height={canvasSize.height} fill="#ffffff" />
+              <rect width={canvasSize.width} height={canvasSize.height} fill={`url(#${gridPatternId})`} />
+              <rect width={canvasSize.width} height={canvasSize.height} fill="none" stroke="rgba(0,0,0,0.18)" strokeWidth={3} />
             </svg>
           </div>
         </div>
+
+        <PixiDocumentView />
 
         {/* interactive overlay (selection + handles) */}
         {!preview ? (
@@ -856,6 +1031,33 @@ export function CanvasViewport() {
               }}
             >
               <svg width={canvasSize.width} height={canvasSize.height} style={{ overflow: "visible", pointerEvents: "none" }}>
+                {activeShape && <PreviewShapeOutline shape={activeShape} />}
+                {doc.tool === "pen" && penDraft?.points?.length ? (
+                  <>
+                    <path
+                      d={pathFromDraft(penDraft.points)}
+                      fill="none"
+                      stroke="var(--accent)"
+                      strokeOpacity={0.85}
+                      strokeWidth={2}
+                      strokeDasharray="6 4"
+                    />
+                    {penDraft.points.map((p, idx) => (
+                      <circle key={idx} cx={p.x} cy={p.y} r={4} fill="var(--accent)" stroke="var(--bg)" strokeWidth={1} />
+                    ))}
+                  </>
+                ) : null}
+                {marquee && (
+                  <rect
+                    x={Math.min(marquee.x, marquee.x + marquee.w)}
+                    y={Math.min(marquee.y, marquee.y + marquee.h)}
+                    width={Math.abs(marquee.w)}
+                    height={Math.abs(marquee.h)}
+                    fill="var(--selection)"
+                    stroke="var(--accent)"
+                    strokeDasharray="6 4"
+                  />
+                )}
                 {selectionBounds && (
                   <SelectionOutline
                     bounds={selectionBounds}
@@ -866,7 +1068,7 @@ export function CanvasViewport() {
                       containerRef.current.setPointerCapture(e.pointerId);
                       checkpoint();
                       dragSnapshot.current = { shapes: selectedShapes, bounds: selectionBounds };
-                      dragStartClient.current = { x: e.clientX, y: e.clientY };
+                      startPoint.current = snapper.snapPoint(toWorld(e.clientX, e.clientY), { altPressed: e.altKey });
                       setDragMode("move");
                     }}
                     onResizeStart={(dir, e) => {
@@ -875,7 +1077,7 @@ export function CanvasViewport() {
                       e.preventDefault();
                       e.stopPropagation();
                       containerRef.current.setPointerCapture(e.pointerId);
-                      const world = toWorld(e.clientX, e.clientY);
+                      const world = snapper.snapPoint(toWorld(e.clientX, e.clientY), { altPressed: e.altKey });
                       startPoint.current = world;
                       resizeDir.current = dir;
                       dragSnapshot.current = { shapes: selectedShapes, bounds: selectionBounds };
@@ -954,15 +1156,15 @@ export function CanvasViewport() {
                                   containerRef.current.setPointerCapture(e.pointerId);
                                   checkpoint();
                                   setActivePathPoint({ shapeId: selectedPath.id, index: idx });
-                                  setPointDrag({
-                                    kind: "in",
-                                    shapeId: selectedPath.id,
-                                    index: idx,
-                                    startWorld: toWorld(e.clientX, e.clientY),
-                                  });
-                                  setDragMode("move");
-                                }}
-                              />
+                                    setPointDrag({
+                                      kind: "in",
+                                      shapeId: selectedPath.id,
+                                      index: idx,
+                                      startWorld: snapper.snapPoint(toWorld(e.clientX, e.clientY), { altPressed: e.altKey }),
+                                    });
+                                    setDragMode("move");
+                                  }}
+                                />
                             </>
                           ) : null}
                           {showOutHandle && outPos ? (
@@ -993,15 +1195,15 @@ export function CanvasViewport() {
                                   containerRef.current.setPointerCapture(e.pointerId);
                                   checkpoint();
                                   setActivePathPoint({ shapeId: selectedPath.id, index: idx });
-                                  setPointDrag({
-                                    kind: "out",
-                                    shapeId: selectedPath.id,
-                                    index: idx,
-                                    startWorld: toWorld(e.clientX, e.clientY),
-                                  });
-                                  setDragMode("move");
-                                }}
-                              />
+                                    setPointDrag({
+                                      kind: "out",
+                                      shapeId: selectedPath.id,
+                                      index: idx,
+                                      startWorld: snapper.snapPoint(toWorld(e.clientX, e.clientY), { altPressed: e.altKey }),
+                                    });
+                                    setDragMode("move");
+                                  }}
+                                />
                             </>
                           ) : null}
                           <circle
@@ -1023,7 +1225,7 @@ export function CanvasViewport() {
                               kind: "anchor",
                               shapeId: selectedPath.id,
                               index: idx,
-                              startWorld: toWorld(e.clientX, e.clientY),
+                              startWorld: snapper.snapPoint(toWorld(e.clientX, e.clientY), { altPressed: e.altKey }),
                               startLocal: { x: pt.x, y: pt.y },
                             });
                             setDragMode("move");
@@ -1194,11 +1396,11 @@ function probeImageSize(src: string): Promise<{ width: number; height: number }>
 }
 
 function getCanvasPaperStyle(bg: any): React.CSSProperties {
-  if (!bg) return { background: "var(--canvas)" };
+  if (!bg) return { background: "linear-gradient(135deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01))" };
   if (bg.kind === "preset") {
     if (bg.value === "white") return { background: "#ffffff" };
     if (bg.value === "black") return { background: "#0a0a0a" };
-    return { background: "var(--canvas)" };
+    return { background: "linear-gradient(135deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01))" };
   }
   if (bg.kind === "custom") {
     return { background: bg.color || "var(--canvas)" };
@@ -1374,6 +1576,21 @@ function marqueeRect(x: number, y: number, w: number, h: number) {
   return { x: Math.min(x, x + w), y: Math.min(y, y + h), w: Math.abs(w), h: Math.abs(h) };
 }
 
+function contentBounds(layers: LayerNode[]) {
+  const shapes = collectShapes(layers).filter((s) => s.visible);
+  if (!shapes.length) return null;
+  const points: { x: number; y: number }[] = [];
+  shapes.forEach((s) => points.push(...shapeWorldBounds(s)));
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  return {
+    x: Math.min(...xs),
+    y: Math.min(...ys),
+    width: Math.max(...xs) - Math.min(...xs),
+    height: Math.max(...ys) - Math.min(...ys),
+  };
+}
+
 function collectShapes(nodes: LayerNode[]): Shape[] {
   const result: Shape[] = [];
   const walk = (list: LayerNode[]) => {
@@ -1388,11 +1605,6 @@ function collectShapes(nodes: LayerNode[]): Shape[] {
 
 function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
-}
-
-function snapTo(v: number, step: number) {
-  if (step <= 1) return v;
-  return Math.round(v / step) * step;
 }
 
 function rotatePoint(x: number, y: number, ox: number, oy: number, deg: number) {

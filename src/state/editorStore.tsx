@@ -16,7 +16,10 @@ import {
   ShapeNode,
   ToolId,
   ViewportState,
+  GridSettings,
 } from "./types";
+
+export const DEFAULT_GRID: GridSettings = { size: 10, color: "#94a3b8", visible: true, magnetic: true };
 
 type History = {
   past: EditorDocument[];
@@ -29,6 +32,7 @@ type EditorContextValue = {
   checkpoint: () => void;
   setCanvasBackground: (bg: EditorDocument["canvasBackground"]) => void;
   setCanvasSize: (size: EditorDocument["canvasSize"]) => void;
+  setGrid: (grid: Partial<GridSettings>) => void;
   preview: boolean;
   setPreview: (v: boolean) => void;
   setTool: (tool: ToolId) => void;
@@ -69,6 +73,15 @@ function baseShape(type: Shape["type"], name: string, x: number, y: number): Sha
     dashed: false,
     opacity: 1,
   } as Shape["stroke"];
+  const glowDefault = {
+    enabled: false,
+    mode: "outer" as const,
+    color: "#4f46e5",
+    opacity: 0.35,
+    blur: 16,
+    spread: 4,
+    offset: { x: 0, y: 0 },
+  };
 
   const common = {
     id: crypto.randomUUID(),
@@ -85,7 +98,8 @@ function baseShape(type: Shape["type"], name: string, x: number, y: number): Sha
     fill: fillDefault,
     stroke: strokeDefault,
     radius: { tl: 8, tr: 8, br: 8, bl: 8 },
-    shadow: { x: 0, y: 4, blur: 12, spread: 0, color: "#000000", opacity: 0.16 },
+    shadow: { enabled: true, x: 0, y: 4, blur: 12, spread: 0, color: "#000000", opacity: 0.16 },
+    glow: glowDefault,
     effects: { blur: 0, backgroundBlur: 0 },
     blendMode: "normal",
   };
@@ -144,17 +158,25 @@ function initialDoc(): EditorDocument {
   text.width = 260;
   text.height = 140;
 
+  const frame = baseShape("rectangle", "Landing Frame", 120, 120);
+  frame.width = 960;
+  frame.height = 1200;
+  frame.fill = { enabled: false, kind: "solid", color: "#ffffff", opacity: 1 };
+  frame.stroke = { enabled: true, kind: "solid", color: "#1f2937", width: 1, align: "inside", dashed: false, opacity: 0.25 } as any;
+
   return {
     layers: [
+      { id: frame.id, kind: "shape", shape: frame },
       { id: rect.id, kind: "shape", shape: rect },
       { id: ellipse.id, kind: "shape", shape: ellipse },
       { id: text.id, kind: "shape", shape: text },
     ],
-    selection: [rect.id],
+    selection: [frame.id],
     tool: "select",
     viewport: { pan: { x: 120, y: 60 }, zoom: 1 },
-    canvasBackground: { kind: "checkerboard" },
+    canvasBackground: { kind: "preset", value: "white" },
     canvasSize: { width: 1440, height: 900 },
+    grid: DEFAULT_GRID,
   };
 }
 
@@ -181,6 +203,17 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
         width: Math.max(1, Math.round(size.width)),
         height: Math.max(1, Math.round(size.height)),
       },
+    }));
+  }, []);
+
+  const setGrid = useCallback((grid: Partial<GridSettings>) => {
+    setDoc((d) => ({
+      ...d,
+      grid: {
+        ...(d.grid ?? DEFAULT_GRID),
+        ...grid,
+        size: Math.max(1, Math.round(grid.size ?? d.grid?.size ?? DEFAULT_GRID.size)),
+      } as GridSettings,
     }));
   }, []);
 
@@ -449,6 +482,7 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       checkpoint,
       setCanvasBackground,
       setCanvasSize,
+      setGrid,
       preview,
       setPreview,
       setTool,
@@ -481,6 +515,7 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       checkpoint,
       setCanvasBackground,
       setCanvasSize,
+      setGrid,
       preview,
       setPreview,
       setTool,

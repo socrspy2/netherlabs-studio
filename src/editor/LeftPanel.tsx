@@ -22,6 +22,8 @@ export function LeftPanel() {
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
+        height: "100%",
+        width: "100%",
       }}
     >
       <div style={{ display: "grid", gridTemplateColumns: `repeat(${tabs.length}, 1fr)`, padding: 8, gap: 6 }}>

@@ -175,6 +175,22 @@ export function PixiDocumentView() {
 
 function buildShape(shape: Shape): PIXI.Container | null {
   if (!shape.visible) return null;
+  const layers: PIXI.Container[] = [];
+  const dropLayer = buildDropShadowLayer(shape);
+  if (dropLayer) layers.push(dropLayer);
+  const glowLayer = buildGlowLayer(shape);
+  if (glowLayer) layers.push(glowLayer);
+  const base = buildBaseDisplay(shape);
+  if (base) layers.push(base);
+  if (!layers.length) return null;
+  if (layers.length === 1) return layers[0] as any;
+  const root = new PIXI.Container();
+  layers.forEach((l) => root.addChild(l as any));
+  return root;
+}
+
+function buildBaseDisplay(shape: Shape): PIXI.Container | null {
+  if (!shape.visible) return null;
 
   if (shape.type === "text") {
     const textShape = shape as TextShape;
@@ -222,15 +238,121 @@ function buildShape(shape: Shape): PIXI.Container | null {
   g.alpha = shape.opacity;
   g.blendMode = toPixiBlendMode(shape.blendMode);
 
-  // path (0..w/h local)
+  drawShapePath(g, shape);
+
+  if (shape.fill.enabled && shape.type !== "line" && (shape.type !== "path" || (shape as PathShape).closed)) {
+    const fill = toPixiFill(shape.fill);
+    g.fill(fill as any);
+  }
+
+  if (shape.stroke.enabled) {
+    const stroke = toPixiStroke(shape.stroke);
+    g.stroke(stroke as any);
+  }
+
+  applyFilters(g, shape);
+  return g;
+}
+
+function buildDropShadowLayer(shape: Shape) {
+  const shadow = shape.shadow;
+  if (!shadow || shadow.enabled === false || shadow.opacity <= 0) return null;
+  const color = shadow.color ?? "#000000";
+  const opacity = shadow.opacity ?? 0.16;
+  const effectShape = createEffectShape(shape, color, opacity, shape.type === "line", {
+    x: shadow.x ?? 0,
+    y: shadow.y ?? 0,
+  });
+  const display = buildBaseDisplay(effectShape);
+  if (!display) return null;
+  const blurStrength = Math.max(0, shadow.blur ?? 0);
+  const blur = new PIXI.BlurFilter({ strength: blurStrength, quality: 4, resolution: 1 }) as any;
+  blur.padding = Math.max(shadow.spread ?? 0, blur.padding ?? 0);
+  (display as any).filters = [blur];
+  if ("tint" in (display as any)) (display as any).tint = parseColor(color).color;
+  (display as any).alpha = (effectShape as any).opacity ?? opacity;
+  return display as any;
+}
+
+function buildGlowLayer(shape: Shape) {
+  const glow = (shape as any).glow as any;
+  if (!glow || glow.enabled === false || glow.opacity <= 0) return null;
+  const color = glow.color ?? "#4f46e5";
+  const opacity = glow.opacity ?? 0.35;
+  const offset = glow.offset ?? { x: 0, y: 0 };
+  const effectShape = createEffectShape(shape, color, opacity, true, offset);
+  const display = buildBaseDisplay(effectShape);
+  if (!display) return null;
+  const blurStrength = Math.max(0, glow.blur ?? 0);
+  const blur = new PIXI.BlurFilter({ strength: blurStrength, quality: 4, resolution: 1 }) as any;
+  blur.padding = Math.max(glow.spread ?? 0, blur.padding ?? 0);
+  (display as any).filters = [blur];
+  (display as any).blendMode = "screen" as any;
+  if ("tint" in (display as any)) (display as any).tint = parseColor(color).color;
+  if ((glow.mode ?? "outer") === "inner") {
+    const mask = buildMaskGraphics(shape);
+    if (mask) {
+      (display as any).mask = mask;
+      const container = new PIXI.Container();
+      container.addChild(display as any);
+      container.addChild(mask);
+      return container;
+    }
+  }
+  return display as any;
+}
+
+function createEffectShape(
+  shape: Shape,
+  color: string,
+  opacity: number,
+  includeStroke: boolean,
+  offset?: { x: number; y: number }
+) {
+  const cloned: any = structuredClone(shape);
+  const parsed = parseColor(color);
+  cloned.x = shape.x + (offset?.x ?? 0);
+  cloned.y = shape.y + (offset?.y ?? 0);
+  cloned.opacity = opacity * parsed.alpha;
+  cloned.effects = { blur: 0, backgroundBlur: 0 };
+  cloned.shadow = null;
+  cloned.glow = null;
+  if (shape.type === "text") {
+    cloned.textFill = { enabled: true, kind: "solid", color, opacity: 1 };
+    cloned.textColor = color;
+  } else {
+    cloned.fill = { enabled: true, kind: "solid", color, opacity: 1 };
+    cloned.stroke =
+      includeStroke && shape.stroke
+        ? {
+            enabled: true,
+            kind: "solid",
+            color,
+            width: shape.stroke.width,
+            align: shape.stroke.align,
+            dashed: false,
+            opacity: 1,
+          }
+        : { ...(shape.stroke || {}), enabled: false };
+  }
+  return cloned as Shape;
+}
+
+function drawShapePath(g: PIXI.Graphics, shape: Shape) {
   if (shape.type === "rectangle") {
-    g.roundRect(0, 0, shape.width, shape.height, shape.radius.tl);
-  } else if (shape.type === "ellipse") {
+    g.roundRect(0, 0, shape.width, shape.height, (shape as any).radius?.tl ?? 0);
+    return;
+  }
+  if (shape.type === "ellipse") {
     g.ellipse(shape.width / 2, shape.height / 2, shape.width / 2, shape.height / 2);
-  } else if (shape.type === "line") {
+    return;
+  }
+  if (shape.type === "line") {
     g.moveTo(0, 0);
     g.lineTo(shape.width, shape.height);
-  } else if (shape.type === "path") {
+    return;
+  }
+  if (shape.type === "path") {
     const p = shape as PathShape;
     if (p.points.length >= 2) {
       g.moveTo(p.points[0].x, p.points[0].y);
@@ -253,19 +375,6 @@ function buildShape(shape: Shape): PIXI.Container | null {
       if (p.closed) g.closePath();
     }
   }
-
-  if (shape.fill.enabled && shape.type !== "line" && (shape.type !== "path" || (shape as PathShape).closed)) {
-    const fill = toPixiFill(shape.fill);
-    g.fill(fill as any);
-  }
-
-  if (shape.stroke.enabled) {
-    const stroke = toPixiStroke(shape.stroke);
-    g.stroke(stroke as any);
-  }
-
-  applyFilters(g, shape);
-  return g;
 }
 
 function applyFilters(display: PIXI.Container, shape: Shape) {
@@ -379,40 +488,16 @@ function buildMaskGraphics(shape: Shape) {
   g.x = shape.x;
   g.y = shape.y;
   g.rotation = degToRad(shape.rotation);
-  if (shape.type === "rectangle") {
-    g.roundRect(0, 0, shape.width, shape.height, shape.radius.tl);
+  if (shape.type === "rectangle" || shape.type === "ellipse" || shape.type === "line" || shape.type === "path") {
+    drawShapePath(g, shape);
     g.fill(0xffffff);
-  } else if (shape.type === "ellipse") {
-    g.ellipse(shape.width / 2, shape.height / 2, shape.width / 2, shape.height / 2);
-    g.fill(0xffffff);
-  } else if (shape.type === "path") {
-    const p = shape as PathShape;
-    if (p.points.length >= 2) {
-      g.moveTo(p.points[0].x, p.points[0].y);
-      const count = p.points.length;
-      const segCount = p.closed ? count : count - 1;
-      for (let i = 0; i < segCount; i++) {
-        const a = p.points[i];
-        const b = p.points[(i + 1) % count];
-        const c1 = a.out ?? { x: a.x, y: a.y };
-        const c2 = b.in ?? { x: b.x, y: b.y };
-        const isCurve =
-          (a.out && (a.out.x !== a.x || a.out.y !== a.y)) ||
-          (b.in && (b.in.x !== b.x || b.in.y !== b.y));
-        if (isCurve) {
-          g.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, b.x, b.y);
-        } else {
-          g.lineTo(b.x, b.y);
-        }
-      }
-      if (p.closed) g.closePath();
-      g.fill(0xffffff);
+    if (shape.type === "line") {
+      g.stroke({ width: Math.max(1, (shape.stroke as any)?.width ?? 2), color: 0xffffff, alpha: 1 } as any);
     }
-  } else {
-    // lines/text: no meaningful mask
-    g.rect(0, 0, shape.width, shape.height);
-    g.fill(0xffffff);
+    return g;
   }
+  g.rect(0, 0, shape.width, shape.height);
+  g.fill(0xffffff);
   return g;
 }
 
