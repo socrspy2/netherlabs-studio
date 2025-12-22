@@ -112,12 +112,15 @@ function baseShape(type: Shape["type"], name: string, x: number, y: number): Sha
       height: 96,
       text: "New text",
       font: "Inter, system-ui, -apple-system, sans-serif",
+      fontStyle: "normal",
       fontSize: 24,
       fontWeight: 600,
       lineHeight: 1.4,
+      letterSpacing: 0,
       align: "left",
-      textColor: "#111827",
-      textFill: { enabled: true, kind: "solid", color: "#111827", opacity: 1 },
+      verticalAlign: "top",
+      textColor: "#e2e8f0",
+      textFill: { enabled: true, kind: "solid", color: "#e2e8f0", opacity: 1 },
     } as Shape;
   }
 
@@ -164,8 +167,11 @@ function initialDoc(): EditorDocument {
   text.fontSize = 28;
   text.fontWeight = 700;
   text.lineHeight = 1.35;
-  text.textColor = "#111827";
-  text.textFill = { enabled: true, kind: "solid", color: "#111827", opacity: 1 };
+  text.letterSpacing = 0;
+  text.fontStyle = "normal";
+  text.verticalAlign = "top";
+  text.textColor = "#e2e8f0";
+  text.textFill = { enabled: true, kind: "solid", color: "#e2e8f0", opacity: 1 };
   text.width = 260;
   text.height = 140;
 

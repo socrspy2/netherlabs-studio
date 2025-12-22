@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Ruler, Sparkle, X } from "lucide-react";
 import { DEFAULT_GRID, useEditor, createShapeForTool } from "../../state/editorStore";
-import { LayerNode, PathShape, Shape } from "../../state/types";
+import { LayerNode, PathShape, Shape, TextShape } from "../../state/types";
 import { PixiDocumentView } from "./PixiDocumentView";
 import { createSnapManager } from "./snap";
 import { useAssetActions } from "../useAssetActions";
+import { TextSettingsWidget } from "../text/TextSettingsWidget";
 
 type DragMode = "none" | "pan" | "marquee" | "creating" | "move" | "resize" | "rotate";
 
@@ -36,6 +37,7 @@ export function CanvasViewport() {
   const [alignGuides, setAlignGuides] = useState<{ v?: number; h?: number }>({});
   const [marquee, setMarquee] = useState<Marquee | null>(null);
   const [activeShape, setActiveShape] = useState<Shape | null>(null);
+  const [editingText, setEditingText] = useState<{ id: string; value: string } | null>(null);
   const [penDraft, setPenDraft] = useState<{ points: PathShape["points"] } | null>(null);
   const [penPlacing, setPenPlacing] = useState<{ index: number; anchor: { x: number; y: number } } | null>(null);
   const [penExtend, setPenExtend] = useState<{ shapeId: string; at: "start" | "end" } | null>(null);
@@ -65,6 +67,11 @@ export function CanvasViewport() {
     const s = selectedShapes[0];
     if (s.type !== "path") return null;
     return s as PathShape;
+  }, [selectedShapes]);
+  const selectedText = useMemo(() => {
+    if (selectedShapes.length !== 1) return null;
+    const s = selectedShapes[0];
+    return s.type === "text" ? (s as TextShape) : null;
   }, [selectedShapes]);
 
   const commitPenDraft = (pointsWorld: PathShape["points"], closed: boolean) => {
@@ -158,6 +165,21 @@ export function CanvasViewport() {
       setActivePathPoint(null);
     }
   }, [activePathPoint, selectedPath]);
+
+  useEffect(() => {
+    if (preview) {
+      setEditingText(null);
+      return;
+    }
+    if (!editingText) return;
+    if (!selectedText || selectedText.id !== editingText.id) {
+      setEditingText(null);
+      return;
+    }
+    if (selectedText.text !== editingText.value) {
+      setEditingText({ id: selectedText.id, value: selectedText.text });
+    }
+  }, [editingText, preview, selectedText]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -420,6 +442,19 @@ export function CanvasViewport() {
     }
 
     const shapeUnder = hitTest(doc.layers, hitWorld.x, hitWorld.y);
+
+    if (editingText) {
+      setEditingText(null);
+    }
+
+    if (doc.tool === "select" && e.detail >= 2 && shapeUnder && shapeUnder.type === "text") {
+      e.stopPropagation();
+      checkpoint();
+      const textShape = shapeUnder as TextShape;
+      setSelection([textShape.id]);
+      setEditingText({ id: textShape.id, value: textShape.text });
+      return;
+    }
 
     // creation tools
     if (["rectangle", "ellipse", "triangle", "trapezoid", "star", "polygon", "wave", "arrow", "line", "text", "frame"].includes(doc.tool)) {
@@ -858,6 +893,13 @@ export function CanvasViewport() {
         flex: "1 1 auto",
       }}
     >
+      <TextSettingsWidget
+        containerRef={containerRef}
+        selectionBounds={selectionBounds}
+        viewport={doc.viewport}
+        textShape={selectedText}
+        hidden={preview}
+      />
       <div style={{ padding: 12, display: "flex", alignItems: "center", gap: 10, position: "relative" }}>
         <div style={{ position: "relative" }}>
           <button
@@ -1067,6 +1109,22 @@ export function CanvasViewport() {
         </div>
 
         <PixiDocumentView />
+
+        {editingText && selectedText ? (
+          <InlineTextEditor
+            containerRef={containerRef}
+            viewport={doc.viewport}
+            shape={selectedText}
+            value={editingText.value}
+            onChange={(val) => {
+              setEditingText((prev) => (prev ? { ...prev, value: val } : prev));
+              if (selectedText) {
+                applyShapePatches([{ id: selectedText.id, changes: { text: val } }], false);
+              }
+            }}
+            onDone={() => setEditingText(null)}
+          />
+        ) : null}
 
         {/* interactive overlay (selection + handles) */}
         {!preview ? (
@@ -1332,6 +1390,85 @@ export function CanvasViewport() {
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function InlineTextEditor({
+  containerRef,
+  viewport,
+  shape,
+  value,
+  onChange,
+  onDone,
+}: {
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  viewport: { pan: { x: number; y: number }; zoom: number };
+  shape: TextShape;
+  value: string;
+  onChange: (val: string) => void;
+  onDone: () => void;
+}) {
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [shape.id]);
+
+  if (!containerRef.current) return null;
+
+  const m = deriveMatrix(shape);
+  const a = m.a * viewport.zoom;
+  const b = m.b * viewport.zoom;
+  const c = m.c * viewport.zoom;
+  const d = m.d * viewport.zoom;
+  const e = m.e * viewport.zoom + viewport.pan.x;
+  const f = m.f * viewport.zoom + viewport.pan.y;
+  const transform = `matrix(${a}, ${b}, ${c}, ${d}, ${e}, ${f})`;
+  const lineHeightPx = resolveEditableLineHeight(shape);
+  const textColor = normalizeTextColor(shape);
+
+  return (
+    <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 60 }}>
+      <textarea
+        ref={inputRef}
+        data-inline-text-editor
+        value={value}
+        onChange={(ev) => onChange(ev.target.value)}
+        onBlur={onDone}
+        onKeyDown={(ev) => {
+          if (ev.key === "Escape") {
+            ev.preventDefault();
+            onDone();
+          }
+        }}
+        onPointerDown={(ev) => ev.stopPropagation()}
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: shape.width,
+          height: shape.height,
+          transformOrigin: "0 0",
+          transform,
+          fontFamily: shape.font,
+          fontSize: shape.fontSize,
+          fontWeight: shape.fontWeight,
+          fontStyle: shape.fontStyle ?? "normal",
+          lineHeight: `${lineHeightPx}px`,
+          letterSpacing: `${shape.letterSpacing ?? 0}px`,
+          color: textColor,
+          background: "rgba(15,23,42,0.85)",
+          border: "1px solid var(--accent)",
+          borderRadius: 8,
+          padding: 6,
+          resize: "none",
+          outline: "none",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+          pointerEvents: "auto",
+          whiteSpace: "pre-wrap",
+        }}
+      />
     </div>
   );
 }
@@ -1736,6 +1873,41 @@ function normalizeAngleDelta(deg: number) {
   if (d > 180) d -= 360;
   if (d < -180) d += 360;
   return d;
+}
+
+function resolveEditableLineHeight(shape: TextShape) {
+  const lh = shape.lineHeight ?? 1.2;
+  const fontSize = shape.fontSize || 16;
+  const isPixel = lh > 10;
+  return isPixel ? lh : lh * fontSize;
+}
+
+function normalizeTextColor(shape: TextShape) {
+  const fill = shape.textFill;
+  const base =
+    fill && (fill as any).enabled && (fill as any).kind === "solid"
+      ? (fill as any).color
+      : shape.textColor || "#ffffff";
+  return normalizeHexColor(base as string);
+}
+
+function normalizeHexColor(color: string | number) {
+  if (!color) return "#ffffff";
+  if (typeof color === "number") {
+    return `#${Math.max(0, Math.min(0xffffff, Math.floor(color))).toString(16).padStart(6, "0")}`;
+  }
+  if (color.startsWith("#") && color.length === 9) {
+    return `#${color.slice(1, 7)}`;
+  }
+  const rgba = color.match(/rgba?\(([^)]+)\)/i);
+  if (rgba) {
+    const [r, g, b] = rgba[1]
+      .split(",")
+      .map((p) => Math.max(0, Math.min(255, Number(p.trim()) || 0)));
+    const toHex = (v: number) => v.toString(16).padStart(2, "0");
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  }
+  return color;
 }
 
 function shapeWorldBounds(s: Shape) {

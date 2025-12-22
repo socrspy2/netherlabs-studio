@@ -172,10 +172,13 @@ export type TextShape = BaseShape & {
   type: "text";
   text: string;
   font: string;
+  fontStyle?: "normal" | "italic";
   fontSize: number;
   fontWeight: number;
   lineHeight: number;
+  letterSpacing?: number;
   align: "left" | "center" | "right";
+  verticalAlign?: "top" | "middle" | "bottom";
   textColor: string; // legacy
   textFill?: Fill;
 };

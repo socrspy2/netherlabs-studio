@@ -141,6 +141,28 @@ export function PixiDocumentView() {
     }
   }, [doc.viewport.pan.x, doc.viewport.pan.y, doc.viewport.zoom, readyTick]);
 
+  useEffect(() => {
+    const fonts = (document as any).fonts;
+    if (!fonts?.addEventListener) return;
+    const pending = { value: false };
+    const handleFontEvent = () => {
+      if (pending.value) return;
+      pending.value = true;
+      requestAnimationFrame(() => {
+        pending.value = false;
+        const tm = (PIXI as any).CanvasTextMetrics?.CanvasTextMetrics ?? (PIXI as any).CanvasTextMetrics;
+        if (tm?.clearCache) tm.clearCache();
+        setReadyTick((t) => t + 1);
+      });
+    };
+    fonts.addEventListener("loadingdone", handleFontEvent);
+    fonts.addEventListener("loadingerror", handleFontEvent);
+    return () => {
+      fonts.removeEventListener("loadingdone", handleFontEvent);
+      fonts.removeEventListener("loadingerror", handleFontEvent);
+    };
+  }, []);
+
   // render
   const flatLayers = useMemo(() => doc.layers, [doc.layers]);
   useEffect(() => {
@@ -231,26 +253,102 @@ function buildBaseDisplay(shape: Shape, assets: Map<string, Asset>, onTextureRea
 
   if (shape.type === "text") {
     const textShape = shape as TextShape;
-    const fill = toPixiFill(
-      textShape.textFill ?? { enabled: true, kind: "solid", color: textShape.textColor, opacity: 1 }
-    );
-    const t = new PIXI.Text({
+    const canvasMetrics =
+      (PIXI as any).CanvasTextMetrics?.CanvasTextMetrics ?? (PIXI as any).CanvasTextMetrics;
+    if (canvasMetrics && !canvasMetrics.__context) {
+      try {
+        // ensure CanvasTextMetrics initializes its internal canvas/context before measuring
+        canvasMetrics._context; // eslint-disable-line @typescript-eslint/no-unused-expressions
+        if (
+          !canvasMetrics.__canvas ||
+          !canvasMetrics.__context ||
+          typeof canvasMetrics.__context.measureText !== "function"
+        ) {
+          const fallbackCanvas = document.createElement("canvas");
+          fallbackCanvas.width = 16;
+          fallbackCanvas.height = 16;
+          canvasMetrics.__canvas = fallbackCanvas;
+          canvasMetrics.__context = fallbackCanvas.getContext("2d");
+        }
+      } catch {
+        // ignore and continue with Pixi defaults
+      }
+    }
+    const textFill = textShape.textFill ?? { enabled: true, kind: "solid", color: textShape.textColor, opacity: 1 };
+    const fillValue =
+      textFill.kind === "linear"
+        ? toPixiFill(textFill as any)
+        : toRgbaString((textFill as any).color ?? textShape.textColor, (textFill as any).opacity ?? 1);
+    const style = new PIXI.TextStyle({
+      fontFamily: textShape.font,
+      fontSize: textShape.fontSize,
+      fontWeight: textShape.fontWeight,
+      fontStyle: textShape.fontStyle ?? "normal",
+      lineHeight: resolveLineHeight(textShape),
+      letterSpacing: textShape.letterSpacing ?? 0,
+      fill: fillValue as any,
+      align: textShape.align,
+      wordWrap: true,
+      wordWrapWidth: Math.max(1, textShape.width),
+      breakWords: true,
+      whiteSpace: "normal",
+    } as any);
+    const container = new PIXI.Container();
+    applyTransform(container, textShape);
+    container.alpha = textShape.opacity;
+    container.blendMode = toPixiBlendMode(textShape.blendMode);
+
+    const textDisplay = new PIXI.Text({
       text: textShape.text,
-      style: {
-        fontFamily: textShape.font,
-        fontSize: textShape.fontSize,
-        fontWeight: textShape.fontWeight,
-        fill,
-        align: textShape.align,
-      } as any,
+      style,
     });
-    t.x = textShape.x;
-    t.y = textShape.y;
-    t.rotation = degToRad(textShape.rotation);
-    t.alpha = textShape.opacity;
-    t.blendMode = toPixiBlendMode(textShape.blendMode);
-    applyFilters(t, textShape);
-    return t;
+    if ((textDisplay as any).updateText) {
+      try {
+        (textDisplay as any).updateText();
+      } catch {
+        // ignore and let Pixi handle lazily
+      }
+    }
+    textDisplay.roundPixels = true;
+
+    const bounds = textDisplay.getLocalBounds?.() ?? { width: textShape.width, height: textShape.height };
+    const metricsWidth = Math.max(1, (bounds as any).width ?? textShape.width);
+    const metricsHeight = Math.max(1, (bounds as any).height ?? textShape.height);
+    const boxWidth = Math.max(1, textShape.width);
+    const boxHeight = Math.max(1, textShape.height);
+    const extraX = boxWidth - metricsWidth;
+    const extraY = boxHeight - metricsHeight;
+    const vAlign = textShape.verticalAlign ?? "top";
+    let offsetX = 0;
+    if (textShape.align === "center") offsetX = extraX / 2;
+    else if (textShape.align === "right") offsetX = extraX;
+    if (!Number.isFinite(offsetX) || extraX < 0) offsetX = 0;
+
+    let offsetY = 0;
+    if (vAlign === "middle") offsetY = extraY / 2;
+    else if (vAlign === "bottom") offsetY = extraY;
+    if (!Number.isFinite(offsetY) || extraY < 0) offsetY = 0;
+
+    textDisplay.x = offsetX;
+    textDisplay.y = offsetY;
+
+    const shouldClipToBox = !(textShape as any).__effectShape;
+    if (shouldClipToBox) {
+      const mask = new PIXI.Graphics();
+      mask.rect(0, 0, boxWidth, boxHeight);
+      if ((mask as any).fill) {
+        (mask as any).fill(0xffffff);
+      } else {
+        (mask as any).beginFill?.(0xffffff);
+        (mask as any).endFill?.();
+      }
+      container.addChild(mask);
+      textDisplay.mask = mask;
+    }
+    container.addChild(textDisplay);
+
+    applyFilters(container as any, textShape);
+    return container;
   }
 
   if (shape.type === "image") {
@@ -527,6 +625,7 @@ function createEffectShape(
   offset?: { x: number; y: number }
 ) {
   const cloned: any = structuredClone(shape);
+  cloned.__effectShape = true;
   const parsed = parseColor(color);
   cloned.x = shape.x + (offset?.x ?? 0);
   cloned.y = shape.y + (offset?.y ?? 0);
@@ -601,6 +700,13 @@ function applyFilters(display: PIXI.Container, shape: Shape) {
   }
 }
 
+function resolveLineHeight(textShape: TextShape) {
+  const lh = textShape.lineHeight ?? 1.2;
+  const fontSize = textShape.fontSize || 16;
+  const isPixelValue = lh > 10;
+  return isPixelValue ? lh : lh * fontSize;
+}
+
 function applyTransform(display: PIXI.Container, shape: Shape) {
   const m = deriveMatrix(shape);
   const scaleX = Math.hypot(m.a, m.b) || 1;
@@ -624,7 +730,8 @@ function deriveMatrix(shape: Shape) {
 function toPixiFill(fill: Fill) {
   if (!fill.enabled) return { color: 0x000000, alpha: 0 };
   if (fill.kind === "solid") {
-    return { color: fill.color, alpha: fill.opacity };
+    const parsed = parseColor(fill.color as any);
+    return { color: parsed.color, alpha: fill.opacity };
   }
   if (fill.kind === "media") {
     return { color: 0xffffff, alpha: 0 };

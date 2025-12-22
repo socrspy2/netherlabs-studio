@@ -438,6 +438,47 @@ export function InspectorPanel() {
             </Section>
           )}
 
+          {shape.type === "text" && isSectionVisible("type") && (
+            <Section title="Typography" open={!collapsed.type} onToggle={() => toggle("type")}>
+              <Grid>
+                {(() => {
+                  const textShape = shape as TextShape;
+                  const textFill = (textShape.textFill &&
+                    (textShape.textFill.kind === "solid" || textShape.textFill.kind === "linear")
+                    ? (textShape.textFill as SolidFill | LinearGradientFill)
+                    : ({ enabled: true, kind: "solid", color: textShape.textColor, opacity: 1 } as SolidFill));
+                  return (
+                    <>
+                      <LabeledInput label="Font" type="text" value={textShape.font} field="font" />
+                      <LabeledInput label="Size" type="number" value={textShape.fontSize} field="fontSize" />
+                      <LabeledInput label="Weight" type="number" value={textShape.fontWeight} field="fontWeight" />
+                      <LabeledInput label="Line height" type="number" value={textShape.lineHeight} field="lineHeight" />
+                      <SelectRow label="Align" value={textShape.align} field="align" options={["left", "center", "right"]} />
+                      <LabeledInput label="Text" type="text" value={textShape.text} field="text" />
+                      <SelectRow
+                        label="Fill"
+                        value={textFill.kind}
+                        field="textFill.kind"
+                        options={["solid", "linear"]}
+                      />
+                      {textFill.kind !== "linear" ? (
+                        <>
+                          <LabeledInput label="Color" type="color" value={textFill.color} field="textFill.color" />
+                          <LabeledInput label="Alpha" type="number" value={textFill.opacity * 100} field="textFill.opacityPercent" />
+                        </>
+                      ) : (
+                        <>
+                          <LabeledInput label="Angle" type="number" value={(textFill as any).angle ?? 0} field="textFill.angle" />
+                          <GradientStopsEditor field="textFill.stops" stops={(textFill as any).stops ?? []} />
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
+              </Grid>
+            </Section>
+          )}
+
           {isSectionVisible("stroke") && (
             <Section title="Stroke" open={!collapsed.stroke} onToggle={() => toggle("stroke")}>
               <ToggleRow field="stroke.enabled" value={shape.stroke.enabled} />
@@ -542,47 +583,6 @@ export function InspectorPanel() {
                   "divide",
                 ]}
               />
-            </Section>
-          )}
-
-          {shape.type === "text" && isSectionVisible("type") && (
-            <Section title="Typography" open={!collapsed.type} onToggle={() => toggle("type")}>
-              <Grid>
-                {(() => {
-                  const textShape = shape as TextShape;
-                  const textFill = (textShape.textFill &&
-                    (textShape.textFill.kind === "solid" || textShape.textFill.kind === "linear")
-                    ? (textShape.textFill as SolidFill | LinearGradientFill)
-                    : ({ enabled: true, kind: "solid", color: textShape.textColor, opacity: 1 } as SolidFill));
-                  return (
-                    <>
-                      <LabeledInput label="Font" type="text" value={textShape.font} field="font" />
-                      <LabeledInput label="Size" type="number" value={textShape.fontSize} field="fontSize" />
-                      <LabeledInput label="Weight" type="number" value={textShape.fontWeight} field="fontWeight" />
-                      <LabeledInput label="Line height" type="number" value={textShape.lineHeight} field="lineHeight" />
-                      <SelectRow label="Align" value={textShape.align} field="align" options={["left", "center", "right"]} />
-                      <LabeledInput label="Text" type="text" value={textShape.text} field="text" />
-                      <SelectRow
-                        label="Fill"
-                        value={textFill.kind}
-                        field="textFill.kind"
-                        options={["solid", "linear"]}
-                      />
-                      {textFill.kind !== "linear" ? (
-                        <>
-                          <LabeledInput label="Color" type="color" value={textFill.color} field="textFill.color" />
-                          <LabeledInput label="Alpha" type="number" value={textFill.opacity * 100} field="textFill.opacityPercent" />
-                        </>
-                      ) : (
-                        <>
-                          <LabeledInput label="Angle" type="number" value={(textFill as any).angle ?? 0} field="textFill.angle" />
-                          <GradientStopsEditor field="textFill.stops" stops={(textFill as any).stops ?? []} />
-                        </>
-                      )}
-                    </>
-                  );
-                })()}
-              </Grid>
             </Section>
           )}
 
