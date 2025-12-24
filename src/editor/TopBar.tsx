@@ -16,15 +16,12 @@ import {
   Type,
   PenTool,
   Hand,
-  ZoomIn,
   Undo2,
   Redo2,
-  PanelTop,
   Play,
   X,
   Upload,
-  Clapperboard,
-  Scissors,
+  Download,
 } from "lucide-react";
 import { useEditor } from "../state/editorStore";
 import { ToolId } from "../state/types";
@@ -47,13 +44,12 @@ const toolIcons: Record<ToolId, React.ReactNode> = {
   text: <Type size={16} />,
   pen: <PenTool size={16} />,
   hand: <Hand size={16} />,
-  zoom: <ZoomIn size={16} />,
 };
 
-const toolOrder: ToolId[] = ["select", "direction", "frame", "line", "text", "pen", "hand", "zoom"];
+const toolOrder: ToolId[] = ["select", "direction", "frame", "line", "text", "pen", "hand"];
 
 export function TopBar() {
-  const { doc, setTool, undo, redo, preview, setPreview } = useEditor();
+  const { doc, setTool, undo, redo, preview, setPreview, animation, setTimelineOpen } = useEditor();
   const { themeId, setThemeId, options } = useTheme();
   const assetActions = useAssetActions();
   const [supportOpen, setSupportOpen] = useState(false);
@@ -62,7 +58,6 @@ export function TopBar() {
   const fileButtonRef = useRef<HTMLButtonElement | null>(null);
   const fileMenuRef = useRef<HTMLDivElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
-  const videoInputRef = useRef<HTMLInputElement | null>(null);
   const shapeButtonRef = useRef<HTMLButtonElement | null>(null);
   const shapeMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -142,98 +137,84 @@ export function TopBar() {
         zIndex: 5000,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 220 }}>
-        <div
+      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 140, position: "relative" }}>
+        <button
+          ref={fileButtonRef}
+          onClick={() => setFileOpen((v) => !v)}
           style={{
-            height: 34,
-            width: 34,
-            borderRadius: 10,
-            background: "linear-gradient(135deg,var(--badge-from),var(--badge-to))",
+            height: 40,
+            width: 40,
+            borderRadius: 12,
+            border: "1px solid var(--border)",
+            background: fileOpen ? "var(--selection)" : "var(--control)",
+            color: "var(--text)",
             display: "grid",
             placeItems: "center",
-            color: "var(--badge-text)",
-            fontWeight: 800,
+            cursor: "pointer",
           }}
+          title="Menu"
         >
-          NL
-        </div>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 15 }}>Netherlabs Studio</div>
-          <div style={{ fontSize: 12, opacity: 0.7 }}>Design Surface</div>
-        </div>
+          <div
+            style={{
+              height: 28,
+              width: 28,
+              borderRadius: 9,
+              background: "linear-gradient(135deg,var(--badge-from),var(--badge-to))",
+              display: "grid",
+              placeItems: "center",
+              color: "var(--badge-text)",
+              fontWeight: 800,
+              fontSize: 12,
+            }}
+          >
+            NL
+          </div>
+        </button>
+        {fileOpen && (
+          <div
+            ref={fileMenuRef}
+            style={{
+              position: "absolute",
+              top: 46,
+              left: 0,
+              background: "var(--panel-strong)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              boxShadow: "0 10px 40px rgba(0,0,0,0.28)",
+              padding: 6,
+              minWidth: 180,
+              zIndex: 2200,
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+            }}
+          >
+            <button
+              onClick={() => {
+                imageInputRef.current?.click();
+                setFileOpen(false);
+              }}
+              style={menuBtnStyle}
+            >
+              <Upload size={14} />
+              Import
+            </button>
+            <button
+              onClick={async () => {
+                const res = await assetActions.exportCutout();
+                if (!res) console.warn("Export requires a masked image or video layer selection.");
+                setFileOpen(false);
+              }}
+              style={menuBtnStyle}
+            >
+              <Download size={14} />
+              Export
+            </button>
+          </div>
+        )}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 20, position: "relative" }}>
-        <div style={{ position: "relative" }}>
-          <button
-            ref={fileButtonRef}
-            onClick={() => setFileOpen((v) => !v)}
-            style={{
-              height: 34,
-              minWidth: 48,
-              padding: "0 12px",
-              borderRadius: 10,
-              background: fileOpen ? "var(--selection)" : "transparent",
-              border: "1px solid var(--border)",
-              color: "var(--text)",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              cursor: "pointer",
-            }}
-            title="File"
-          >
-            <Upload size={16} />
-            <span style={{ fontSize: 12 }}>File</span>
-          </button>
-          {fileOpen && (
-            <div
-              ref={fileMenuRef}
-              style={{
-                position: "absolute",
-                top: 42,
-                left: 0,
-                background: "var(--panel-strong)",
-                border: "1px solid var(--border)",
-                borderRadius: 10,
-                boxShadow: "0 10px 40px rgba(0,0,0,0.28)",
-                padding: 6,
-                minWidth: 180,
-                zIndex: 2200,
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-              }}
-            >
-              <button
-                onClick={() => imageInputRef.current?.click()}
-                style={menuBtnStyle}
-              >
-                <Upload size={14} />
-                Import Image(s)
-              </button>
-              <button
-                onClick={() => videoInputRef.current?.click()}
-                style={menuBtnStyle}
-              >
-                <Clapperboard size={14} />
-                Import Video(s)
-              </button>
-              <button
-                onClick={async () => {
-                  const res = await assetActions.exportCutout();
-                  if (!res) alert("Select an image/video layer with a mask to export a cutout.");
-                  setFileOpen(false);
-                }}
-                style={menuBtnStyle}
-              >
-                <Scissors size={14} />
-                Export Cutout
-              </button>
-            </div>
-          )}
-        </div>
-
         <button
           ref={shapeButtonRef}
           onClick={() => setShapeOpen((v) => !v)}
@@ -370,6 +351,14 @@ export function TopBar() {
         </button>
 
         <button
+          onClick={() => setTimelineOpen(!animation.open)}
+          style={{ ...iconBtnStyle, width: 90, background: animation.open ? "var(--selection)" : iconBtnStyle.background }}
+          title="Animate timeline"
+        >
+          Animate
+        </button>
+
+        <button
           onClick={() => setPreview(!preview)}
           style={iconBtnStyle}
           title={preview ? "Exit Preview" : "Preview"}
@@ -390,44 +379,17 @@ export function TopBar() {
         >
           <Redo2 size={16} />
         </button>
-
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            background: "var(--surface)",
-            padding: "8px 10px",
-            borderRadius: 10,
-            border: "1px solid var(--border)",
-          }}
-        >
-          <PanelTop size={16} />
-          <div style={{ fontSize: 12, opacity: 0.8 }}>Draft workspace</div>
-        </div>
       </div>
 
-      <input
+  <input
         ref={imageInputRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/svg+xml"
+        accept="image/png,image/jpeg,image/webp,image/svg+xml,video/mp4,video/webm"
         multiple
         style={{ display: "none" }}
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);
-          if (files.length) importFiles(files, "image");
-          e.target.value = "";
-        }}
-      />
-      <input
-        ref={videoInputRef}
-        type="file"
-        accept="video/mp4,video/webm"
-        multiple
-        style={{ display: "none" }}
-        onChange={(e) => {
-          const files = Array.from(e.target.files ?? []);
-          if (files.length) importFiles(files, "video");
+          if (files.length) importFiles(files);
           e.target.value = "";
         }}
       />

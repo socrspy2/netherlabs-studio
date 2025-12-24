@@ -2,19 +2,26 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Ruler, Sparkle, X } from "lucide-react";
 import { DEFAULT_GRID, useEditor, createShapeForTool } from "../../state/editorStore";
 import { LayerNode, PathShape, Shape, TextShape } from "../../state/types";
+import { AnimatableProperty } from "../../state/animation";
 import { PixiDocumentView } from "./PixiDocumentView";
 import { createSnapManager } from "./snap";
 import { useAssetActions } from "../useAssetActions";
 import { TextSettingsWidget } from "../text/TextSettingsWidget";
+import { parseNumericInput } from "../../utils/numeric";
 
 type DragMode = "none" | "pan" | "marquee" | "creating" | "move" | "resize" | "rotate";
 
 type Marquee = { x: number; y: number; w: number; h: number };
 const DEFAULT_HANDLE_LEN = 36;
+const DEFAULT_CANVAS_SIZE = { width: 1800, height: 1200 };
+
+type SnapGuideLine = { value: number; from: number; to: number; source: "canvas" | "shape" };
+type AlignGuideState = { v?: SnapGuideLine; h?: SnapGuideLine };
 
 export function CanvasViewport() {
   const {
-    doc,
+    resolvedDoc: doc,
+    animation,
     preview,
     checkpoint,
     applyShapePatches,
@@ -24,17 +31,28 @@ export function CanvasViewport() {
     createShape,
     setTool,
     setGrid,
+    createAnimatedTrack,
+    addKeyframeAtPlayhead,
+    setTimelineOpen,
+    setPlayhead,
+    groupSelected,
+    playSegment,
   } = useEditor();
   const assetActions = useAssetActions();
   const grid = doc.grid ?? DEFAULT_GRID;
+  const canvasSize = doc.canvasSize || DEFAULT_CANVAS_SIZE;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const snapper = useMemo(() => createSnapManager(grid), [grid]);
+  const smartGuides = useMemo(
+    () => buildAlignmentGuides(doc.layers, doc.selection, canvasSize),
+    [doc.layers, doc.selection, canvasSize]
+  );
   const gridPatternId = useMemo(() => `grid-${Math.random().toString(36).slice(2)}`, []);
   const [dragMode, setDragMode] = useState<DragMode>("none");
   const [gridMenuOpen, setGridMenuOpen] = useState(false);
   const gridButtonRef = useRef<HTMLButtonElement | null>(null);
   const gridMenuRef = useRef<HTMLDivElement | null>(null);
-  const [alignGuides, setAlignGuides] = useState<{ v?: number; h?: number }>({});
+  const [alignGuides, setAlignGuides] = useState<AlignGuideState>({});
   const [marquee, setMarquee] = useState<Marquee | null>(null);
   const [activeShape, setActiveShape] = useState<Shape | null>(null);
   const [editingText, setEditingText] = useState<{ id: string; value: string } | null>(null);
@@ -47,6 +65,15 @@ export function CanvasViewport() {
     | { kind: "in" | "out"; shapeId: string; index: number; startWorld: { x: number; y: number } }
     | null
   >(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; targetIds: string[] } | null>(null);
+  const firedSegmentsRef = useRef<Set<string>>(new Set());
+  const animateProperties: { id: AnimatableProperty; label: string }[] = [
+    { id: "position", label: "Transform (x, y)" },
+    { id: "rotation", label: "Rotation" },
+    { id: "scale", label: "Scale" },
+    { id: "opacity", label: "Opacity" },
+    { id: "path", label: "Path / points" },
+  ];
   const startPoint = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const dragSnapshot = useRef<{
     shapes: Shape[];
@@ -60,6 +87,7 @@ export function CanvasViewport() {
     shapes: Shape[];
   } | null>(null);
   const spacePressed = useRef(false);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
 
   const selectedShapes = useMemo(() => collectShapes(doc.layers).filter((s) => doc.selection.includes(s.id)), [doc.layers, doc.selection]);
   const selectedPath = useMemo(() => {
@@ -90,8 +118,9 @@ export function CanvasViewport() {
       pointType: p.pointType ?? (p.in || p.out ? "smooth" : "corner"),
     }));
 
+    const base = createShapeForTool("rectangle" as any, { x, y }) as any;
     const shape = {
-      ...(createShapeForTool("rectangle" as any, { x, y }) as any),
+      ...(base as any),
       id: crypto.randomUUID(),
       type: "path",
       name: "Path",
@@ -101,6 +130,13 @@ export function CanvasViewport() {
       height: Math.max(1, maxY - y),
       points,
       closed,
+      stroke: {
+        ...(base.stroke ?? {}),
+        enabled: true,
+        width: Math.max(1, (base.stroke as any)?.width ?? 2),
+        opacity: Math.min(1, Math.max(0, (base.stroke as any)?.opacity ?? 1)),
+      },
+      fill: closed ? base.fill : { ...(base.fill ?? {}), enabled: false },
     } as PathShape;
 
     createShape(shape);
@@ -231,6 +267,10 @@ export function CanvasViewport() {
     };
   }, [gridMenuOpen]);
 
+  useEffect(() => {
+    if (preview && gridMenuOpen) setGridMenuOpen(false);
+  }, [gridMenuOpen, preview]);
+
   const togglePointSmooth = (path: PathShape, index: number): PathShape => {
     const next = structuredClone(path);
     const pt = next.points[index];
@@ -254,14 +294,26 @@ export function CanvasViewport() {
     const onWheel = (e: WheelEvent) => {
       if (!containerRef.current) return;
       e.preventDefault();
-      const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-      const nextZoom = clamp(doc.viewport.zoom * zoomFactor, 0.25, 3);
-      updateViewport({ zoom: nextZoom });
+      const rect = containerRef.current.getBoundingClientRect();
+      const cursor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      const worldBefore = {
+        x: (cursor.x - doc.viewport.pan.x) / doc.viewport.zoom,
+        y: (cursor.y - doc.viewport.pan.y) / doc.viewport.zoom,
+      };
+      const delta = Math.max(0.04, Math.min(0.25, Math.abs(e.deltaY) * 0.0015));
+      const factor = 1 + (e.deltaY > 0 ? -delta : delta);
+      const nextZoom = clamp(doc.viewport.zoom * factor, 0.2, 4);
+      if (!Number.isFinite(nextZoom) || nextZoom === doc.viewport.zoom) return;
+      const nextPan = {
+        x: cursor.x - worldBefore.x * nextZoom,
+        y: cursor.y - worldBefore.y * nextZoom,
+      };
+      updateViewport({ zoom: nextZoom, pan: nextPan });
     };
     const el = containerRef.current;
     el?.addEventListener("wheel", onWheel, { passive: false });
     return () => el?.removeEventListener("wheel", onWheel);
-  }, [doc.viewport.zoom, updateViewport]);
+  }, [doc.viewport.pan.x, doc.viewport.pan.y, doc.viewport.zoom, updateViewport]);
 
   useEffect(() => {
     // Prevent browser text-selection (blue highlight) while dragging/resizing/panning.
@@ -277,6 +329,15 @@ export function CanvasViewport() {
     };
   }, [dragMode, preview]);
 
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      if (contextMenuRef.current?.contains(e.target as Node)) return;
+      setContextMenu(null);
+    };
+    window.addEventListener("pointerdown", onDown);
+    return () => window.removeEventListener("pointerdown", onDown);
+  }, []);
+
   const toWorld = (clientX: number, clientY: number) => {
     if (!containerRef.current) return { x: 0, y: 0 };
     const rect = containerRef.current.getBoundingClientRect();
@@ -285,10 +346,78 @@ export function CanvasViewport() {
     return { x, y };
   };
 
+  const maybeTriggerSegments = useCallback(
+    (type: "click" | "hover" | "focus" | "in-view", shapeId?: string) => {
+      if (!animation) return;
+      const fired = firedSegmentsRef.current;
+      animation.sequences.forEach((seq) => {
+        const normalized = (seq as any).segments ? seq : (seq as any);
+        const targetShape = shapeId ?? normalized.targetId;
+        normalized.segments?.forEach((seg: any) => {
+          const matches = seg.triggers?.filter((tr: any) => tr.type === type || (type === "in-view" && tr.type === "delay")) ?? [];
+          matches.forEach((match: any) => {
+            const targetOpt = (match.options?.target as string) ?? "self";
+            if (targetOpt === "self" && targetShape !== normalized.targetId) return;
+            if (targetOpt === "other" && match.options?.targetId && match.options.targetId !== targetShape) return;
+            if (seg.repeatable === false && fired.has(seg.id)) return;
+            const triggerRun = () => playSegment(seg.targetId ?? normalized.targetId, seg.id);
+            if (match.type === "delay") {
+              const delay = Number(match.options?.delayMs ?? 0);
+              setTimeout(triggerRun, Math.max(0, delay));
+            } else {
+              triggerRun();
+            }
+            fired.add(seg.id);
+          });
+        });
+      });
+    },
+    [animation, playSegment]
+  );
+
+  useEffect(() => {
+    if (!preview) {
+      firedSegmentsRef.current.clear();
+      return;
+    }
+    firedSegmentsRef.current.clear();
+    maybeTriggerSegments("in-view");
+  }, [preview, maybeTriggerSegments]);
+
+  const performMirror = (axis: "x" | "y") => {
+    const targets = contextMenu?.targetIds ?? doc.selection;
+    if (!targets.length) return;
+    applyShapePatches(
+      targets.map((id) => ({
+        id,
+        changes: (shape: Shape) => {
+          const sx = shape.scale?.x ?? 1;
+          const sy = shape.scale?.y ?? 1;
+          const scale = axis === "x" ? { x: sx === 0 ? -1 : -sx, y: sy } : { x: sx, y: sy === 0 ? -1 : -sy };
+          return { ...shape, scale };
+        },
+      })),
+      true
+    );
+  };
+
+  const runPathfinder = () => {
+    const targets = contextMenu?.targetIds ?? doc.selection;
+    if ((targets?.length ?? 0) < 2) return;
+    groupSelected(targets);
+  };
+
+  const triggerAnimateProperty = (prop: AnimatableProperty) => {
+    const targetId = (contextMenu?.targetIds ?? doc.selection)[0];
+    if (!targetId) return;
+    setTimelineOpen(true);
+    addKeyframeAtPlayhead(targetId, prop);
+  };
+
   const recenterViewport = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    const size = doc.canvasSize || { width: 1800, height: 1200 };
+    const size = canvasSize;
     const content = contentBounds(doc.layers) ?? { x: 0, y: 0, width: size.width, height: size.height };
     const viewCenter = { x: el.clientWidth / 2, y: el.clientHeight / 2 };
     const contentCenter = { x: content.x + content.width / 2, y: content.y + content.height / 2 };
@@ -298,7 +427,7 @@ export function CanvasViewport() {
         y: viewCenter.y - contentCenter.y * doc.viewport.zoom,
       },
     });
-  }, [doc.canvasSize, doc.layers, doc.viewport.zoom, updateViewport]);
+  }, [canvasSize, doc.layers, doc.viewport.zoom, updateViewport]);
 
   const didInitialCenter = useRef(false);
   useEffect(() => {
@@ -308,7 +437,15 @@ export function CanvasViewport() {
   }, [recenterViewport]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
-    if (preview) return;
+    if (preview) {
+      const worldRaw = toWorld(e.clientX, e.clientY);
+      const hitShape = hitTestLayers(doc.layers, worldRaw.x, worldRaw.y);
+      if (hitShape) {
+        maybeTriggerSegments("click", hitShape.id);
+        maybeTriggerSegments("focus", hitShape.id);
+      }
+      return;
+    }
     e.preventDefault();
     const worldRaw = toWorld(e.clientX, e.clientY);
     const world = snapper.snapPoint(worldRaw, { altPressed: e.altKey });
@@ -441,7 +578,7 @@ export function CanvasViewport() {
       }
     }
 
-    const shapeUnder = hitTest(doc.layers, hitWorld.x, hitWorld.y);
+    const shapeUnder = hitTestLayers(doc.layers, hitWorld.x, hitWorld.y);
 
     if (editingText) {
       setEditingText(null);
@@ -732,35 +869,27 @@ export function CanvasViewport() {
       const startBounds = dragSnapshot.current.bounds;
       let snapDx = totalDxRaw;
       let snapDy = totalDyRaw;
+      let guideState: AlignGuideState = {};
 
-      // center-align helpers against canvas center
-      if (startBounds) {
-        const canvasCenter = { x: canvasSize.width / 2, y: canvasSize.height / 2 };
-        const nextCenter = {
-          x: startBounds.x + startBounds.width / 2 + snapDx,
-          y: startBounds.y + startBounds.height / 2 + snapDy,
-        };
-        const threshold = 6 / doc.viewport.zoom;
-        const vDelta = canvasCenter.x - nextCenter.x;
-        const hDelta = canvasCenter.y - nextCenter.y;
-        const nextGuides: { v?: number; h?: number } = {};
-        if (Math.abs(vDelta) <= threshold) {
-          snapDx += vDelta;
-          nextGuides.v = canvasCenter.x;
-        }
-        if (Math.abs(hDelta) <= threshold) {
-          snapDy += hDelta;
-          nextGuides.h = canvasCenter.y;
-        }
-        setAlignGuides(nextGuides);
+      if (startBounds && !e.altKey) {
+        const smartSnap = snapTranslationToGuides(
+          { x: startBounds.x + snapDx, y: startBounds.y + snapDy, width: startBounds.width, height: startBounds.height },
+          smartGuides,
+          6 / doc.viewport.zoom
+        );
+        snapDx += smartSnap.dx;
+        snapDy += smartSnap.dy;
+        guideState = smartSnap.guides;
       }
+
+      setAlignGuides(guideState);
 
       applyShapePatches(
         dragSnapshot.current.shapes.map((s) => ({
           id: s.id,
           changes: {
-            x: snapper.snapValue(s.x + snapDx, { altPressed: e.altKey }),
-            y: snapper.snapValue(s.y + snapDy, { altPressed: e.altKey }),
+            x: guideState.v ? s.x + snapDx : snapper.snapValue(s.x + snapDx, { altPressed: e.altKey }),
+            y: guideState.h ? s.y + snapDy : snapper.snapValue(s.y + snapDy, { altPressed: e.altKey }),
           },
         })),
         false
@@ -776,8 +905,32 @@ export function CanvasViewport() {
         uniform: e.shiftKey,
         fromCenter: e.altKey,
       });
-      const snappedBounds = snapper.snapRect(nextBounds, { altPressed: e.altKey });
+      const smartSnap = !e.altKey
+        ? snapRectToGuides(nextBounds, smartGuides, 6 / doc.viewport.zoom, start.bounds)
+        : { rect: nextBounds, guides: {} as AlignGuideState };
+      let snappedBounds = smartSnap.rect;
+
+      const useGridX = !smartSnap.guides.v;
+      const useGridY = !smartSnap.guides.h;
+      if (useGridX || useGridY) {
+        const snapX1 = useGridX ? snapper.snapValue(snappedBounds.x, { altPressed: e.altKey }) : snappedBounds.x;
+        const snapX2 = useGridX
+          ? snapper.snapValue(snappedBounds.x + snappedBounds.width, { altPressed: e.altKey })
+          : snappedBounds.x + snappedBounds.width;
+        const snapY1 = useGridY ? snapper.snapValue(snappedBounds.y, { altPressed: e.altKey }) : snappedBounds.y;
+        const snapY2 = useGridY
+          ? snapper.snapValue(snappedBounds.y + snappedBounds.height, { altPressed: e.altKey })
+          : snappedBounds.y + snappedBounds.height;
+        snappedBounds = {
+          x: Math.min(snapX1, snapX2),
+          y: Math.min(snapY1, snapY2),
+          width: Math.max(4, Math.abs(snapX2 - snapX1)),
+          height: Math.max(4, Math.abs(snapY2 - snapY1)),
+        };
+      }
+
       dragSnapshot.current.bounds = snappedBounds;
+      setAlignGuides(smartSnap.guides);
 
       applyShapePatches(
         start.shapes.map((s) => {
@@ -876,13 +1029,32 @@ export function CanvasViewport() {
 
   const zoomLabel = `${Math.round(doc.viewport.zoom * 100)}%`;
   const paperBackground = getCanvasPaperStyle(doc.canvasBackground);
-  const canvasSize = doc.canvasSize || { width: 1800, height: 1200 };
   const gridStep = Math.max(1, grid.size || 1);
   const majorEvery = 4;
   const majorStep = gridStep * majorEvery;
 
   return (
     <div
+      onPointerMove={(e) => {
+        if (preview) {
+          const w = toWorld(e.clientX, e.clientY);
+          const hitShape = hitTestLayers(doc.layers, w.x, w.y);
+          if (hitShape) maybeTriggerSegments("hover", hitShape.id);
+        }
+      }}
+      onContextMenu={(e) => {
+        if (preview) return;
+        e.preventDefault();
+        const world = toWorld(e.clientX, e.clientY);
+        const shapes = collectShapes(doc.layers);
+        const hit = hitTestShapeList(shapes, world);
+        if (hit && !doc.selection.includes(hit.id)) {
+          setSelection([hit.id]);
+        }
+        const targets = doc.selection.length ? doc.selection : hit ? [hit.id] : [];
+        if (!targets.length) return;
+        setContextMenu({ x: e.clientX, y: e.clientY, targetIds: targets });
+      }}
       style={{
         position: "relative",
         minHeight: "calc(100vh - 80px)",
@@ -900,144 +1072,150 @@ export function CanvasViewport() {
         textShape={selectedText}
         hidden={preview}
       />
-      <div style={{ padding: 12, display: "flex", alignItems: "center", gap: 10, position: "relative" }}>
-        <div style={{ position: "relative" }}>
-          <button
-            ref={gridButtonRef}
-            onClick={() => setGridMenuOpen((v) => !v)}
-            style={{
-              height: 34,
-              padding: "0 12px",
-              borderRadius: 10,
-              border: "1px solid var(--border)",
-              background: "var(--control)",
-              color: "var(--text)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              minWidth: 120,
-            }}
-            title="Grid settings"
-          >
-            <Ruler size={14} />
-            <span style={{ fontSize: 12, fontWeight: 700 }}>Grid</span>
-            <span style={{ fontSize: 11, opacity: 0.7, marginLeft: "auto" }}>
-              {grid.size}px · {grid.magnetic ? "Snap on" : "Snap off"}
-            </span>
-          </button>
-          {gridMenuOpen && (
-            <div
-              ref={gridMenuRef}
+      {!preview && (
+        <div style={{ padding: 12, display: "flex", alignItems: "center", gap: 10, position: "relative" }}>
+          <div style={{ position: "relative" }}>
+            <button
+              ref={gridButtonRef}
+              onClick={() => setGridMenuOpen((v) => !v)}
               style={{
-                position: "absolute",
-                top: 42,
-                left: 0,
-                background: "var(--panel-strong)",
+                height: 34,
+                padding: "0 12px",
+                borderRadius: 10,
                 border: "1px solid var(--border)",
-                borderRadius: 12,
-                boxShadow: "0 14px 50px rgba(0,0,0,0.35)",
-                padding: 12,
-                minWidth: 260,
-                zIndex: 30,
+                background: "var(--control)",
+                color: "var(--text)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                minWidth: 120,
               }}
+              title="Grid settings"
             >
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                <div style={{ fontWeight: 700, fontSize: 12 }}>Grid options</div>
-                <button
-                  onClick={() => setGridMenuOpen(false)}
-                  style={{
-                    height: 28,
-                    width: 28,
-                    borderRadius: 8,
-                    border: "1px solid var(--border)",
-                    background: "var(--control)",
-                    color: "var(--text)",
-                    display: "grid",
-                    placeItems: "center",
-                    cursor: "pointer",
-                  }}
-                  aria-label="Close grid menu"
-                >
-                  <X size={12} />
-                </button>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 6 }}>Grid size</div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {Array.from({ length: 10 }, (_, i) => i + 1).map((size) => (
-                      <button
-                        key={size}
-                        onClick={() => setGrid({ size })}
-                        style={{
-                          height: 30,
-                          padding: "0 8px",
-                          borderRadius: 8,
-                          border: "1px solid var(--border)",
-                          background: grid.size === size ? "var(--selection)" : "var(--control)",
-                          color: "var(--text)",
-                          cursor: "pointer",
-                        }}
-                      >
-                        {size}px
-                      </button>
-                    ))}
-                    <input
-                      type="number"
-                      min={1}
-                      value={grid.size}
-                      onChange={(e) => setGrid({ size: Number(e.target.value) || 1 })}
-                      style={{
-                        height: 32,
-                        width: 80,
-                        borderRadius: 8,
-                        border: "1px solid var(--border)",
-                        background: "var(--control)",
-                        color: "var(--text)",
-                        padding: "0 8px",
-                      }}
-                    />
-                  </div>
-                </div>
-
-                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
-                  <span style={{ minWidth: 80, opacity: 0.8 }}>Grid color</span>
-                  <input
-                    type="color"
-                    value={grid.color}
-                    onChange={(e) => setGrid({ color: e.target.value })}
+              <Ruler size={14} />
+              <span style={{ fontSize: 12, fontWeight: 700 }}>Grid</span>
+              <span style={{ fontSize: 11, opacity: 0.7, marginLeft: "auto" }}>
+                {grid.size}px · {grid.magnetic ? "Snap on" : "Snap off"}
+              </span>
+            </button>
+            {gridMenuOpen && (
+              <div
+                ref={gridMenuRef}
+                style={{
+                  position: "absolute",
+                  top: 42,
+                  left: 0,
+                  background: "var(--panel-strong)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 12,
+                  boxShadow: "0 14px 50px rgba(0,0,0,0.35)",
+                  padding: 12,
+                  minWidth: 260,
+                  zIndex: 30,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div style={{ fontWeight: 700, fontSize: 12 }}>Grid options</div>
+                  <button
+                    onClick={() => setGridMenuOpen(false)}
                     style={{
-                      height: 32,
-                      width: 60,
+                      height: 28,
+                      width: 28,
                       borderRadius: 8,
                       border: "1px solid var(--border)",
                       background: "var(--control)",
+                      color: "var(--text)",
+                      display: "grid",
+                      placeItems: "center",
+                      cursor: "pointer",
                     }}
-                  />
-                </label>
+                    aria-label="Close grid menu"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
 
-                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
-                  <input type="checkbox" checked={grid.visible} onChange={(e) => setGrid({ visible: e.target.checked })} />
-                  <span>Show grid</span>
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
-                  <input type="checkbox" checked={grid.magnetic} onChange={(e) => setGrid({ magnetic: e.target.checked })} />
-                  <span>Magnetic snap</span>
-                </label>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 6 }}>Grid size</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {Array.from({ length: 10 }, (_, i) => i + 1).map((size) => (
+                        <button
+                          key={size}
+                          onClick={() => setGrid({ size })}
+                          style={{
+                            height: 30,
+                            padding: "0 8px",
+                            borderRadius: 8,
+                            border: "1px solid var(--border)",
+                            background: grid.size === size ? "var(--selection)" : "var(--control)",
+                            color: "var(--text)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {size}px
+                        </button>
+                      ))}
+                      <input
+                        type="number"
+                        min={1}
+                        value={grid.size}
+                        onChange={(e) => {
+                          const parsed = parseNumericInput(e.target.value);
+                          if (parsed === null) return;
+                          setGrid({ size: Math.max(1, Math.round(parsed)) });
+                        }}
+                        style={{
+                          height: 32,
+                          width: 80,
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
+                          background: "var(--control)",
+                          color: "var(--text)",
+                          padding: "0 8px",
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
+                    <span style={{ minWidth: 80, opacity: 0.8 }}>Grid color</span>
+                    <input
+                      type="color"
+                      value={grid.color}
+                      onChange={(e) => setGrid({ color: e.target.value })}
+                      style={{
+                        height: 32,
+                        width: 60,
+                        borderRadius: 8,
+                        border: "1px solid var(--border)",
+                        background: "var(--control)",
+                      }}
+                    />
+                  </label>
+
+                  <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
+                    <input type="checkbox" checked={grid.visible} onChange={(e) => setGrid({ visible: e.target.checked })} />
+                    <span>Show grid</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12 }}>
+                    <input type="checkbox" checked={grid.magnetic} onChange={(e) => setGrid({ magnetic: e.target.checked })} />
+                    <span>Magnetic snap</span>
+                  </label>
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--control)", padding: "6px 10px", borderRadius: 10, border: "1px solid var(--border)" }}>
-          <Sparkle size={14} />
-          <span style={{ fontSize: 12, opacity: 0.8 }}>Smart select & handles</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--control)", padding: "6px 10px", borderRadius: 10, border: "1px solid var(--border)" }}>
+            <Sparkle size={14} />
+            <span style={{ fontSize: 12, opacity: 0.8 }}>Smart select & handles</span>
+          </div>
+          <div style={{ marginLeft: "auto", fontSize: 12, opacity: 0.8 }}>Canvas {canvasSize.width}×{canvasSize.height}</div>
+          <div style={{ marginLeft: 12, fontSize: 12, opacity: 0.8 }}>Zoom {zoomLabel}</div>
         </div>
-        <div style={{ marginLeft: "auto", fontSize: 12, opacity: 0.8 }}>Canvas {canvasSize.width}×{canvasSize.height}</div>
-        <div style={{ marginLeft: 12, fontSize: 12, opacity: 0.8 }}>Zoom {zoomLabel}</div>
-      </div>
+      )}
       <div
         ref={containerRef}
         style={{
@@ -1064,6 +1242,7 @@ export function CanvasViewport() {
         }}
         onDrop={async (e) => {
           e.preventDefault();
+          if (preview) return;
           const assetId = e.dataTransfer.getData("text/asset-id");
           if (assetId) {
             const world = snapper.snapPoint(toWorld(e.clientX, e.clientY));
@@ -1102,7 +1281,7 @@ export function CanvasViewport() {
                 </pattern>
               </defs>
               <rect width={canvasSize.width} height={canvasSize.height} fill="#ffffff" />
-              {grid.visible ? <rect width={canvasSize.width} height={canvasSize.height} fill={`url(#${gridPatternId})`} /> : null}
+              {grid.visible && !preview ? <rect width={canvasSize.width} height={canvasSize.height} fill={`url(#${gridPatternId})`} /> : null}
               <rect width={canvasSize.width} height={canvasSize.height} fill="none" stroke="rgba(0,0,0,0.18)" strokeWidth={3} />
             </svg>
           </div>
@@ -1165,24 +1344,24 @@ export function CanvasViewport() {
                     strokeDasharray="6 4"
                   />
                 )}
-                {alignGuides.v !== undefined ? (
+                {alignGuides.v ? (
                   <line
-                    x1={alignGuides.v}
-                    y1={0}
-                    x2={alignGuides.v}
-                    y2={canvasSize.height}
+                    x1={alignGuides.v.value}
+                    y1={alignGuides.v.from ?? 0}
+                    x2={alignGuides.v.value}
+                    y2={alignGuides.v.to ?? canvasSize.height}
                     stroke="var(--accent)"
                     strokeWidth={1}
                     strokeOpacity={0.7}
                     strokeDasharray="4 4"
                   />
                 ) : null}
-                {alignGuides.h !== undefined ? (
+                {alignGuides.h ? (
                   <line
-                    x1={0}
-                    y1={alignGuides.h}
-                    x2={canvasSize.width}
-                    y2={alignGuides.h}
+                    x1={alignGuides.h.from ?? 0}
+                    y1={alignGuides.h.value}
+                    x2={alignGuides.h.to ?? canvasSize.width}
+                    y2={alignGuides.h.value}
                     stroke="var(--accent)"
                     strokeWidth={1}
                     strokeOpacity={0.7}
@@ -1390,9 +1569,77 @@ export function CanvasViewport() {
           </div>
         ) : null}
       </div>
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+          style={{
+            position: "fixed",
+            left: contextMenu.x,
+            top: contextMenu.y,
+            zIndex: 9000,
+            background: "var(--panel-strong)",
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+            padding: 8,
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            minWidth: 200,
+            boxShadow: "0 10px 40px rgba(0,0,0,0.3)",
+          }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <button style={menuBtn} onClick={() => { performMirror("x"); setContextMenu(null); }}>
+              Mirror (horizontal)
+            </button>
+            <button style={menuBtn} onClick={() => { performMirror("y"); setContextMenu(null); }}>
+              Flip (vertical)
+            </button>
+            <button
+              style={{ ...menuBtn, opacity: (contextMenu.targetIds?.length ?? 0) >= 2 ? 1 : 0.5 }}
+              disabled={(contextMenu.targetIds?.length ?? 0) < 2}
+              onClick={() => {
+                runPathfinder();
+                setContextMenu(null);
+              }}
+            >
+              Pathfinder (group)
+            </button>
+          </div>
+          <div style={{ height: 1, background: "var(--border)" }} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>Animate</div>
+            {animateProperties.map((prop) => (
+              <button
+                key={prop.id}
+                style={menuBtn}
+                onClick={() => {
+                  triggerAnimateProperty(prop.id);
+                  setContextMenu(null);
+                }}
+              >
+                {prop.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+const menuBtn: React.CSSProperties = {
+  height: 32,
+  borderRadius: 8,
+  border: "1px solid var(--border)",
+  background: "var(--control)",
+  color: "var(--text)",
+  textAlign: "left",
+  padding: "0 10px",
+  cursor: "pointer",
+};
 
 function InlineTextEditor({
   containerRef,
@@ -1653,16 +1900,8 @@ function pathFromDraft(points: PathShape["points"]) {
   return parts.join(" ");
 }
 
-function hitTest(layers: LayerNode[], x: number, y: number): Shape | null {
-  const shapes = collectShapes(layers);
-  for (let i = shapes.length - 1; i >= 0; i--) {
-    const s = shapes[i];
-    if (!s.visible || s.locked) continue;
-    if (x >= s.x && x <= s.x + s.width && y >= s.y && y <= s.y + s.height) {
-      return s;
-    }
-  }
-  return null;
+function hitTestLayers(layers: LayerNode[], x: number, y: number): Shape | null {
+  return hitTestShapeList(collectShapes(layers), { x, y });
 }
 
 function findPathById(layers: LayerNode[], id: string): PathShape | null {
@@ -1787,6 +2026,24 @@ function hitWithin(layers: LayerNode[], rect: { x: number; y: number; w: number;
   return ids;
 }
 
+function hitTestShapeList(shapes: Shape[], point: { x: number; y: number }) {
+  for (let i = shapes.length - 1; i >= 0; i--) {
+    const s = shapes[i];
+    if (!s.visible || s.locked) continue;
+    const corners = shapeWorldBounds(s);
+    const xs = corners.map((c) => c.x);
+    const ys = corners.map((c) => c.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    if (point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY) {
+      return s;
+    }
+  }
+  return null;
+}
+
 function marqueeRect(x: number, y: number, w: number, h: number) {
   return { x: Math.min(x, x + w), y: Math.min(y, y + h), w: Math.abs(w), h: Math.abs(h) };
 }
@@ -1804,6 +2061,233 @@ function contentBounds(layers: LayerNode[]) {
     width: Math.max(...xs) - Math.min(...xs),
     height: Math.max(...ys) - Math.min(...ys),
   };
+}
+
+function rectFromPoints(points: { x: number; y: number }[]) {
+  if (!points.length) return null;
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  return { x: minX, y: minY, width: Math.max(...xs) - minX, height: Math.max(...ys) - minY };
+}
+
+type SmartGuideSet = { vertical: SnapGuideLine[]; horizontal: SnapGuideLine[] };
+
+function buildAlignmentGuides(
+  layers: LayerNode[],
+  selection: string[],
+  canvasSize: { width: number; height: number }
+): SmartGuideSet {
+  const guides: SmartGuideSet = { vertical: [], horizontal: [] };
+  const shapes = collectShapes(layers).filter((s) => s.visible && !s.locked && !selection.includes(s.id));
+
+  shapes.forEach((shape) => {
+    const bounds = rectFromPoints(shapeWorldBounds(shape));
+    if (!bounds) return;
+    const left = bounds.x;
+    const right = bounds.x + bounds.width;
+    const top = bounds.y;
+    const bottom = bounds.y + bounds.height;
+    const cx = left + bounds.width / 2;
+    const cy = top + bounds.height / 2;
+
+    guides.vertical.push({ value: left, from: top, to: bottom, source: "shape" });
+    guides.vertical.push({ value: cx, from: top, to: bottom, source: "shape" });
+    guides.vertical.push({ value: right, from: top, to: bottom, source: "shape" });
+    guides.horizontal.push({ value: top, from: left, to: right, source: "shape" });
+    guides.horizontal.push({ value: cy, from: left, to: right, source: "shape" });
+    guides.horizontal.push({ value: bottom, from: left, to: right, source: "shape" });
+  });
+
+  guides.vertical.push({ value: 0, from: 0, to: canvasSize.height, source: "canvas" });
+  guides.vertical.push({ value: canvasSize.width / 2, from: 0, to: canvasSize.height, source: "canvas" });
+  guides.vertical.push({ value: canvasSize.width, from: 0, to: canvasSize.height, source: "canvas" });
+  guides.horizontal.push({ value: 0, from: 0, to: canvasSize.width, source: "canvas" });
+  guides.horizontal.push({ value: canvasSize.height / 2, from: 0, to: canvasSize.width, source: "canvas" });
+  guides.horizontal.push({ value: canvasSize.height, from: 0, to: canvasSize.width, source: "canvas" });
+
+  return guides;
+}
+
+function snapTranslationToGuides(
+  bounds: { x: number; y: number; width: number; height: number },
+  guides: SmartGuideSet,
+  threshold: number
+) {
+  let vGuide: SnapGuideLine | null = null;
+  let hGuide: SnapGuideLine | null = null;
+  let vDelta = 0;
+  let hDelta = 0;
+  let vDist = Number.MAX_VALUE;
+  let hDist = Number.MAX_VALUE;
+
+  [bounds.x, bounds.x + bounds.width / 2, bounds.x + bounds.width].forEach((pos) => {
+    guides.vertical.forEach((g) => {
+      const delta = g.value - pos;
+      const dist = Math.abs(delta);
+      if (dist <= threshold && dist < vDist) {
+        vGuide = g;
+        vDelta = delta;
+        vDist = dist;
+      }
+    });
+  });
+
+  [bounds.y, bounds.y + bounds.height / 2, bounds.y + bounds.height].forEach((pos) => {
+    guides.horizontal.forEach((g) => {
+      const delta = g.value - pos;
+      const dist = Math.abs(delta);
+      if (dist <= threshold && dist < hDist) {
+        hGuide = g;
+        hDelta = delta;
+        hDist = dist;
+      }
+    });
+  });
+
+  const snapped = { x: bounds.x + vDelta, y: bounds.y + hDelta, width: bounds.width, height: bounds.height };
+
+  const guideState: AlignGuideState = {};
+  if (vGuide) {
+    const g = vGuide as SnapGuideLine;
+    guideState.v = {
+      value: g.value,
+      from: Math.min(g.from, snapped.y),
+      to: Math.max(g.to, snapped.y + snapped.height),
+      source: g.source,
+    };
+  }
+  if (hGuide) {
+    const g = hGuide as SnapGuideLine;
+    guideState.h = {
+      value: g.value,
+      from: Math.min(g.from, snapped.x),
+      to: Math.max(g.to, snapped.x + snapped.width),
+      source: g.source,
+    };
+  }
+
+  return { dx: vGuide ? vDelta : 0, dy: hGuide ? hDelta : 0, guides: guideState };
+}
+
+function snapRectToGuides(
+  rect: { x: number; y: number; width: number; height: number },
+  guides: SmartGuideSet,
+  threshold: number,
+  startBounds?: { x: number; y: number; width: number; height: number }
+) {
+  const movingLeft = !startBounds || Math.abs(rect.x - startBounds.x) > 0.01;
+  const movingRight =
+    !startBounds || Math.abs(rect.x + rect.width - (startBounds.x + startBounds.width)) > 0.01;
+  const movingTop = !startBounds || Math.abs(rect.y - startBounds.y) > 0.01;
+  const movingBottom =
+    !startBounds || Math.abs(rect.y + rect.height - (startBounds.y + startBounds.height)) > 0.01;
+
+  const xCandidates: { value: number; edge: "left" | "center" | "right" }[] = [];
+  const yCandidates: { value: number; edge: "top" | "center" | "bottom" }[] = [];
+  if (movingLeft) xCandidates.push({ value: rect.x, edge: "left" });
+  if (movingRight) xCandidates.push({ value: rect.x + rect.width, edge: "right" });
+  if (movingLeft && movingRight) xCandidates.push({ value: rect.x + rect.width / 2, edge: "center" });
+  if (movingTop) yCandidates.push({ value: rect.y, edge: "top" });
+  if (movingBottom) yCandidates.push({ value: rect.y + rect.height, edge: "bottom" });
+  if (movingTop && movingBottom) yCandidates.push({ value: rect.y + rect.height / 2, edge: "center" });
+
+  let vGuide: SnapGuideLine | null = null;
+  let hGuide: SnapGuideLine | null = null;
+  let vDelta = 0;
+  let hDelta = 0;
+  let vEdge: "left" | "center" | "right" | null = null;
+  let hEdge: "top" | "center" | "bottom" | null = null;
+  let vDist = Number.MAX_VALUE;
+  let hDist = Number.MAX_VALUE;
+
+  xCandidates.forEach((candidate) => {
+    guides.vertical.forEach((g) => {
+      const delta = g.value - candidate.value;
+      const dist = Math.abs(delta);
+      if (dist <= threshold && dist < vDist) {
+        vGuide = g;
+        vDelta = delta;
+        vEdge = candidate.edge;
+        vDist = dist;
+      }
+    });
+  });
+
+  yCandidates.forEach((candidate) => {
+    guides.horizontal.forEach((g) => {
+      const delta = g.value - candidate.value;
+      const dist = Math.abs(delta);
+      if (dist <= threshold && dist < hDist) {
+        hGuide = g;
+        hDelta = delta;
+        hEdge = candidate.edge;
+        hDist = dist;
+      }
+    });
+  });
+
+  let snapped = { ...rect };
+  if (vGuide && vEdge) {
+    const g = vGuide as SnapGuideLine;
+    const right = rect.x + rect.width;
+    if (vEdge === "left") {
+      const newLeft = g.value;
+      let newRight = right;
+      if (newRight - newLeft < 4) newRight = newLeft + 4;
+      snapped = { ...snapped, x: newLeft, width: newRight - newLeft };
+    } else if (vEdge === "right") {
+      const newRight = g.value;
+      let newLeft = rect.x;
+      if (newRight - newLeft < 4) newLeft = newRight - 4;
+      snapped = { ...snapped, x: newLeft, width: newRight - newLeft };
+    } else {
+      const half = Math.max(2, rect.width / 2);
+      snapped = { ...snapped, x: g.value - half, width: half * 2 };
+    }
+  }
+
+  if (hGuide && hEdge) {
+    const g = hGuide as SnapGuideLine;
+    const bottom = rect.y + rect.height;
+    if (hEdge === "top") {
+      const newTop = g.value;
+      let newBottom = bottom;
+      if (newBottom - newTop < 4) newBottom = newTop + 4;
+      snapped = { ...snapped, y: newTop, height: newBottom - newTop };
+    } else if (hEdge === "bottom") {
+      const newBottom = g.value;
+      let newTop = rect.y;
+      if (newBottom - newTop < 4) newTop = newBottom - 4;
+      snapped = { ...snapped, y: newTop, height: newBottom - newTop };
+    } else {
+      const half = Math.max(2, rect.height / 2);
+      snapped = { ...snapped, y: g.value - half, height: half * 2 };
+    }
+  }
+
+  const guideState: AlignGuideState = {};
+  if (vGuide) {
+    const g = vGuide as SnapGuideLine;
+    guideState.v = {
+      value: g.value,
+      from: Math.min(g.from, snapped.y),
+      to: Math.max(g.to, snapped.y + snapped.height),
+      source: g.source,
+    };
+  }
+  if (hGuide) {
+    const g = hGuide as SnapGuideLine;
+    guideState.h = {
+      value: g.value,
+      from: Math.min(g.from, snapped.x),
+      to: Math.max(g.to, snapped.x + snapped.width),
+      source: g.source,
+    };
+  }
+
+  return { rect: snapped, guides: guideState };
 }
 
 function collectShapes(nodes: LayerNode[]): Shape[] {
@@ -1855,17 +2339,28 @@ function decomposeMatrix(m: DOMMatrix) {
   const rotation = (Math.atan2(m.b, m.a) * 180) / Math.PI;
   const x = m.e;
   const y = m.f;
-  return { x, y, rotation };
+  const scaleX = Math.hypot(m.a, m.b) || 1;
+  const scaleY = Math.hypot(m.c, m.d) || 1;
+  return { x, y, rotation, scale: { x: scaleX, y: scaleY } };
 }
 
 function deriveMatrix(shape: Shape) {
-  // Use fromMatrix to satisfy DOMMatrix ctor typing (string | number[]) while accepting stored DOMMatrix values
-  const base = shape.matrix
-    ? DOMMatrix.fromMatrix(shape.matrix as DOMMatrixInit)
-    : new DOMMatrix().rotate(shape.rotation ?? 0);
-  base.e = shape.x;
-  base.f = shape.y;
-  return base;
+  const sx = shape.scale?.x ?? 1;
+  const sy = shape.scale?.y ?? 1;
+  if (shape.matrix) {
+    const base = DOMMatrix.fromMatrix(shape.matrix as DOMMatrixInit);
+    base.e = shape.x;
+    base.f = shape.y;
+    base.a *= sx;
+    base.b *= sx;
+    base.c *= sy;
+    base.d *= sy;
+    return base;
+  }
+  const theta = ((shape.rotation ?? 0) * Math.PI) / 180;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  return new DOMMatrix([cos * sx, sin * sx, -sin * sy, cos * sy, shape.x, shape.y]);
 }
 
 function normalizeAngleDelta(deg: number) {

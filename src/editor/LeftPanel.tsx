@@ -279,8 +279,7 @@ function LayersPanel() {
     moveLayer,
     makeMaskFromSelection,
     toggleMask,
-  } =
-    useEditor();
+  } = useEditor();
   const flatSelection = useMemo(() => new Set(doc.selection), [doc.selection]);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
 
@@ -293,16 +292,16 @@ function LayersPanel() {
         <button style={miniBtn} onClick={() => bring("back")} title="Send to back">
           <ArrowDown size={14} />
         </button>
-        <button style={miniBtn} onClick={duplicateSelection} title="Duplicate">
+        <button style={miniBtn} onClick={() => duplicateSelection()} title="Duplicate">
           <Copy size={14} />
         </button>
-        <button style={miniBtn} onClick={deleteSelection} title="Delete">
+        <button style={miniBtn} onClick={() => deleteSelection()} title="Delete">
           <Trash2 size={14} />
         </button>
-        <button style={miniBtn} onClick={groupSelected} title="Group">
+        <button style={miniBtn} onClick={() => groupSelected()} title="Group">
           G
         </button>
-        <button style={miniBtn} onClick={ungroupSelected} title="Ungroup">
+        <button style={miniBtn} onClick={() => ungroupSelected()} title="Ungroup">
           U
         </button>
       </div>
@@ -336,15 +335,15 @@ function LayersPanel() {
           y={menu.y}
           onClose={() => setMenu(null)}
           actions={[
-            { label: "Duplicate", onClick: () => duplicateSelection() },
-            { label: "Delete", onClick: () => deleteSelection() },
-            { label: "Bring to front", onClick: () => bring("front") },
-            { label: "Send to back", onClick: () => bring("back") },
-            { label: "Bring forward", onClick: () => bring("up") },
-            { label: "Send backward", onClick: () => bring("down") },
-            { label: "Group", onClick: () => groupSelected() },
-            { label: "Ungroup", onClick: () => ungroupSelected() },
-            { label: "Make Mask", onClick: () => makeMaskFromSelection() },
+            { label: "Duplicate", onClick: () => duplicateSelection([menu.id]) },
+            { label: "Delete", onClick: () => deleteSelection([menu.id]) },
+            { label: "Bring to front", onClick: () => bring("front", [menu.id]) },
+            { label: "Send to back", onClick: () => bring("back", [menu.id]) },
+            { label: "Bring forward", onClick: () => bring("up", [menu.id]) },
+            { label: "Send backward", onClick: () => bring("down", [menu.id]) },
+            { label: "Group", onClick: () => groupSelected(doc.selection.length ? doc.selection : [menu.id]) },
+            { label: "Ungroup", onClick: () => ungroupSelected(doc.selection.length ? doc.selection : [menu.id]) },
+            { label: "Make Mask", onClick: () => makeMaskFromSelection(doc.selection.length ? doc.selection : [menu.id]) },
             { label: "Toggle Mask", onClick: () => toggleMask(menu.id) },
             { label: "Toggle visibility", onClick: () => toggleVisible(menu.id) },
             { label: "Toggle lock", onClick: () => toggleLocked(menu.id) },

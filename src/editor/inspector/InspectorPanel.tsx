@@ -2,9 +2,10 @@ import React from "react";
 import { useEditor } from "../../state/editorStore";
 import { Shape, TextShape, SolidFill, LinearGradientFill, ImageShape } from "../../state/types";
 import { useAssetActions } from "../useAssetActions";
+import { clampRange, formatNumeric, parseNumericInput } from "../../utils/numeric";
 
 export function InspectorPanel() {
-  const { doc, setCanvasBackground, setCanvasSize, updateShapeProps } = useEditor();
+  const { resolvedDoc: doc, setCanvasBackground, setCanvasSize, updateShapeProps } = useEditor();
   const assetActions = useAssetActions();
   const selected = doc.selection[0];
   const flat = React.useMemo(() => flatten(doc.layers), [doc.layers]);
@@ -135,6 +136,8 @@ export function InspectorPanel() {
         gap: 12,
         minHeight: 0,
         height: "100%",
+        flex: 1,
+        maxHeight: "100%",
         overflow: "hidden",
         width: "100%",
       }}
@@ -200,7 +203,18 @@ export function InspectorPanel() {
           </div>
           {!shape && <div style={{ fontSize: 12, opacity: 0.7 }}>Select a layer to edit properties.</div>}
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", paddingRight: 4, display: "flex", flexDirection: "column", gap: 12 }}>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          overscrollBehavior: "contain",
+          paddingRight: 4,
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+        }}
+      >
 
       {isSectionVisible("canvas") && (
         <Section title="Canvas" open={!collapsed.canvas} onToggle={() => toggle("canvas")}>
@@ -522,27 +536,29 @@ export function InspectorPanel() {
                 <LabeledInput label="X" type="number" value={shadow.x ?? 0} field="shadow.x" />
                 <LabeledInput label="Y" type="number" value={shadow.y ?? 0} field="shadow.y" />
                 <LabeledInput label="Blur" type="number" value={shadow.blur ?? 0} field="shadow.blur" />
-                <LabeledInput label="Spread" type="number" value={shadow.spread ?? 0} field="shadow.spread" />
-                <LabeledInput label="Color" type="color" value={shadow.color ?? "#000000"} field="shadow.color" />
-                <LabeledInput label="Opacity" type="number" value={(shadow.opacity ?? 0) * 100} field="shadow.opacityPercent" />
-              </Grid>
-            </Section>
-          )}
+            <LabeledInput label="Spread" type="number" value={shadow.spread ?? 0} field="shadow.spread" />
+            <LabeledInput label="Color" type="color" value={shadow.color ?? "#000000"} field="shadow.color" />
+            <LabeledInput label="Opacity" type="number" value={(shadow.opacity ?? 0) * 100} field="shadow.opacityPercent" />
+          </Grid>
+          <SelectRow label="Quality" value={(shadow as any).quality ?? "medium"} field="shadow.quality" options={["low", "medium", "high"]} />
+        </Section>
+      )}
 
-          {isSectionVisible("glow") && (
-            <Section title="Glow" open={!collapsed.glow} onToggle={() => toggle("glow")}>
+      {isSectionVisible("glow") && (
+        <Section title="Glow" open={!collapsed.glow} onToggle={() => toggle("glow")}>
               <ToggleRow label="Enabled" field="glow.enabled" value={glow.enabled ?? false} />
               <SelectRow label="Mode" value={glow.mode ?? "outer"} field="glow.mode" options={["outer", "inner"]} />
               <Grid>
                 <LabeledInput label="Color" type="color" value={glow.color ?? "#4f46e5"} field="glow.color" />
                 <LabeledInput label="Opacity" type="number" value={(glow.opacity ?? 0) * 100} field="glow.opacityPercent" />
-                <LabeledInput label="Blur" type="number" value={glow.blur ?? 0} field="glow.blur" />
-                <LabeledInput label="Spread" type="number" value={glow.spread ?? 0} field="glow.spread" />
-                <LabeledInput label="Offset X" type="number" value={glow.offset?.x ?? 0} field="glow.offset.x" />
-                <LabeledInput label="Offset Y" type="number" value={glow.offset?.y ?? 0} field="glow.offset.y" />
-              </Grid>
-            </Section>
-          )}
+              <LabeledInput label="Blur" type="number" value={glow.blur ?? 0} field="glow.blur" />
+              <LabeledInput label="Spread" type="number" value={glow.spread ?? 0} field="glow.spread" />
+              <LabeledInput label="Offset X" type="number" value={glow.offset?.x ?? 0} field="glow.offset.x" />
+              <LabeledInput label="Offset Y" type="number" value={glow.offset?.y ?? 0} field="glow.offset.y" />
+            </Grid>
+            <SelectRow label="Quality" value={(glow as any).quality ?? "medium"} field="glow.quality" options={["low", "medium", "high"]} />
+        </Section>
+      )}
 
           {isSectionVisible("effects") && (
             <Section title="Effects" open={!collapsed.effects} onToggle={() => toggle("effects")}>
@@ -650,19 +666,37 @@ function Grid({ children }: { children: React.ReactNode }) {
 }
 
 function LabeledSizeInput({ label, value, onChange }: { label: string; value: number; onChange: (next: number) => void }) {
+  const [draft, setDraft] = React.useState(() => formatNumeric(value, 3));
+  const [dirty, setDirty] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!dirty) setDraft(formatNumeric(value, 3));
+  }, [dirty, value]);
+
+  const commit = (raw: string, reason: "change" | "blur" = "change") => {
+    setDraft(raw);
+    const parsed = parseNumericInput(raw);
+    if (parsed === null) {
+      setDirty(true);
+      if (reason === "blur") setDraft(formatNumeric(value, 3));
+      return;
+    }
+    const clamped = Math.max(1, Math.round(parsed));
+    setDirty(false);
+    onChange(clamped);
+    setDraft(formatNumeric(clamped, 3));
+  };
+
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, minWidth: 120 }}>
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, minWidth: 120, minHeight: 48 }}>
       <span style={{ opacity: 0.7 }}>{label}</span>
       <input
         type="number"
         min={1}
-        value={value}
-        onChange={(e) => {
-          const parsed = Number(e.target.value);
-          if (!Number.isFinite(parsed)) return;
-          onChange(Math.max(1, parsed));
-        }}
-        style={inputStyle}
+        value={draft}
+        onChange={(e) => commit(e.target.value)}
+        onBlur={() => commit(draft, "blur")}
+        style={numberInputStyle}
       />
     </label>
   );
@@ -685,98 +719,71 @@ function LabeledInput({
 
   const dragRef = React.useRef<{ startY: number; startValue: number; pointerId: number } | null>(null);
 
-  const onChange = (val: string) => {
-    const numericFields = [
-      "x",
-      "y",
-      "width",
-      "height",
-      "rotation",
-      "opacityPercent",
-      "fill.opacityPercent",
-      "fill.angle",
-      "stroke.width",
-      "stroke.angle",
-      "radius.tl",
-      "radius.tr",
-      "radius.bl",
-      "radius.br",
-      "shadow.x",
-      "shadow.y",
-      "shadow.blur",
-      "shadow.spread",
-      "shadow.opacityPercent",
-      "glow.blur",
-      "glow.spread",
-      "glow.opacityPercent",
-      "glow.offset.x",
-      "glow.offset.y",
-      "effects.blur",
-      "effects.backgroundBlur",
-      "fontSize",
-      "fontWeight",
-      "lineHeight",
-      "textFill.opacityPercent",
-      "textFill.angle",
-      "fill.offset.x",
-      "fill.offset.y",
-      "fill.scalePercent",
-      "fillScale",
-      "fillOffset.x",
-      "fillOffset.y",
-      "fillScalePercent",
-    ];
-    const isNumeric = numericFields.includes(field);
-    let parsed: any = val;
-    let targetField = field;
-    if (isNumeric) {
-      parsed = Number(val);
-      if (field === "opacityPercent") {
-        parsed = parsed / 100;
-        targetField = "opacity";
-      }
-      if (field === "fill.opacityPercent") {
-        parsed = parsed / 100;
-        targetField = "fill.opacity";
-      }
-      if (field === "shadow.opacityPercent") {
-        parsed = parsed / 100;
-        targetField = "shadow.opacity";
-      }
-      if (field === "glow.opacityPercent") {
-        parsed = parsed / 100;
-        targetField = "glow.opacity";
-      }
-      if (field === "textFill.opacityPercent") {
-        parsed = parsed / 100;
-        targetField = "textFill.opacity";
-      }
-      if (field === "fill.scalePercent") {
-        parsed = parsed / 100;
-        targetField = "fill.scale";
-      }
-      if (field === "fillScalePercent") {
-        parsed = parsed / 100;
-        targetField = "fillScale";
-      }
-      if (field === "rotation") {
-        return updateShapeProps(selected, (prev) => {
-          const next = applyPath(prev, targetField, parsed);
-          return { ...next, matrix: undefined };
-        });
-      }
-    }
-    updateShapeProps(selected, (prev) => applyPath(prev, targetField, parsed));
-  };
+  const isNumeric = type === "number";
+  const [draft, setDraft] = React.useState(() => (isNumeric ? formatNumeric(value) : value));
+  const [dirty, setDirty] = React.useState(false);
 
   React.useEffect(() => {
+    if (!dirty && isNumeric) {
+      setDraft(formatNumeric(value));
+    }
+    if (!isNumeric) {
+      setDraft(value);
+    }
+  }, [dirty, isNumeric, value]);
+
+  const commitNumeric = React.useCallback(
+    (raw: string, reason: "change" | "blur" | "drag" = "change") => {
+      setDraft(raw);
+      const parsed = parseNumericInput(raw);
+      if (parsed === null) {
+        setDirty(true);
+        if (reason === "blur") setDraft(formatNumeric(value));
+        return;
+      }
+
+      const { targetField, nextValue } = normalizeNumericField(field, parsed);
+      if (!Number.isFinite(nextValue)) {
+        console.warn(`[inspector] Ignoring invalid value for ${field}`, { raw, parsed, nextValue });
+        setDraft(formatNumeric(value));
+        setDirty(false);
+        return;
+      }
+
+      const displayValue = displayValueForField(field, parsed, nextValue);
+      setDirty(false);
+      if (targetField === "rotation") {
+        updateShapeProps(selected, (prev) => {
+          const next = applyPath(prev, targetField, nextValue);
+          return { ...next, matrix: undefined };
+        });
+        setDraft(formatNumeric(displayValue));
+        return;
+      }
+
+      updateShapeProps(selected, (prev) => applyPath(prev, targetField, nextValue));
+      setDraft(formatNumeric(displayValue));
+    },
+    [field, selected, updateShapeProps, value]
+  );
+
+  const commitNonNumeric = React.useCallback(
+    (val: string) => {
+      setDraft(val);
+      updateShapeProps(selected, (prev) => applyPath(prev, field, val));
+    },
+    [field, selected, updateShapeProps]
+  );
+
+  React.useEffect(() => {
+    if (!isNumeric) return;
     const onPointerMove = (e: PointerEvent) => {
       if (!dragRef.current) return;
       const { startY, startValue } = dragRef.current;
       const delta = Math.round(startY - e.clientY);
       const next = startValue + delta;
       if (Number.isFinite(next)) {
-        onChange(String(next));
+        commitNumeric(String(next), "drag");
       }
     };
     const onPointerUp = () => {
@@ -788,26 +795,18 @@ function LabeledInput({
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
     };
-  }, [onChange]);
+  }, [commitNumeric, isNumeric]);
 
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
-      <span style={{ opacity: 0.7 }}>{label}</span>
-      <div style={{ position: "relative" }}>
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, minWidth: 0, width: "100%", minHeight: 48 }}>
+      <span style={{ opacity: 0.7, whiteSpace: "nowrap" }}>{label}</span>
+      <div style={{ position: "relative", minWidth: 0 }}>
         <input
           type={type}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          style={{
-            height: 32,
-            borderRadius: 8,
-            border: "1px solid var(--border)",
-            background: "var(--control)",
-            color: "var(--text)",
-            padding: "0 24px 0 8px",
-            width: "100%",
-            boxSizing: "border-box",
-          }}
+          value={isNumeric ? draft : value}
+          onChange={(e) => (isNumeric ? commitNumeric(e.target.value) : commitNonNumeric(e.target.value))}
+          onBlur={isNumeric ? () => commitNumeric(draft, "blur") : undefined}
+          style={type === "number" ? numberInputStyle : inputStyle}
         />
         {type === "number" ? (
           <div
@@ -932,6 +931,76 @@ function applyPath(shape: any, path: string, value: any) {
   return next;
 }
 
+const PERCENT_INPUT_FIELDS = new Set([
+  "opacityPercent",
+  "fill.opacityPercent",
+  "shadow.opacityPercent",
+  "glow.opacityPercent",
+  "textFill.opacityPercent",
+]);
+
+const SCALE_PERCENT_FIELDS = new Set(["fill.scalePercent", "fillScalePercent"]);
+
+const ZERO_ONE_FIELDS = new Set(["opacity", "fill.opacity", "shadow.opacity", "glow.opacity", "textFill.opacity"]);
+
+const NON_NEGATIVE_FIELDS = new Set([
+  "width",
+  "height",
+  "stroke.width",
+  "radius.tl",
+  "radius.tr",
+  "radius.bl",
+  "radius.br",
+  "shadow.blur",
+  "shadow.spread",
+  "glow.blur",
+  "glow.spread",
+  "glow.offset.x",
+  "glow.offset.y",
+  "effects.blur",
+  "effects.backgroundBlur",
+  "fill.scale",
+  "fillScale",
+  "fontSize",
+  "fontWeight",
+  "lineHeight",
+]);
+
+function normalizeNumericField(field: string, rawValue: number) {
+  let targetField = field;
+  let nextValue = rawValue;
+
+  if (PERCENT_INPUT_FIELDS.has(field)) {
+    nextValue = clampRange(rawValue, 0, 100) / 100;
+    if (field === "opacityPercent") targetField = "opacity";
+    if (field === "fill.opacityPercent") targetField = "fill.opacity";
+    if (field === "shadow.opacityPercent") targetField = "shadow.opacity";
+    if (field === "glow.opacityPercent") targetField = "glow.opacity";
+    if (field === "textFill.opacityPercent") targetField = "textFill.opacity";
+  } else if (SCALE_PERCENT_FIELDS.has(field)) {
+    nextValue = clampRange(rawValue, 0, undefined) / 100;
+    if (field === "fill.scalePercent") targetField = "fill.scale";
+    if (field === "fillScalePercent") targetField = "fillScale";
+  }
+
+  const clamp = getClampForField(targetField);
+  nextValue = clampRange(nextValue, clamp.min, clamp.max);
+
+  return { targetField, nextValue };
+}
+
+function getClampForField(field: string): { min?: number; max?: number } {
+  if (ZERO_ONE_FIELDS.has(field)) return { min: 0, max: 1 };
+  if (NON_NEGATIVE_FIELDS.has(field)) return { min: 0 };
+  return {};
+}
+
+function displayValueForField(field: string, raw: number, normalized: number) {
+  if (PERCENT_INPUT_FIELDS.has(field)) return clampRange(raw, 0, 100);
+  if (SCALE_PERCENT_FIELDS.has(field)) return clampRange(raw, 0, undefined);
+  return normalized;
+}
+
 function normalizeKind(shape: any, key: "fill" | "stroke" | "textFill", kind: string) {
   const next = { ...shape };
   const current = next[key] || {};
@@ -1036,11 +1105,13 @@ function GradientStopsEditor({ field, stops }: { field: string; stops: any[] }) 
               type="number"
               value={Math.round((s.opacity ?? 1) * 100)}
               onChange={(e) => {
-                const v = Number(e.target.value) / 100;
+                const parsed = parseNumericInput(e.target.value);
+                if (parsed === null) return;
+                const v = clampRange(parsed, 0, 100) / 100;
                 const nextStops = safeStops.map((st, i) => (i === idx ? { ...st, opacity: v } : st));
                 updateShapeProps(selected, (prev) => applyPath(prev, field, nextStops));
               }}
-              style={inputStyle}
+              style={numberInputStyle}
             />
           </label>
           <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
@@ -1049,11 +1120,13 @@ function GradientStopsEditor({ field, stops }: { field: string; stops: any[] }) 
               type="number"
               value={Math.round((s.offset ?? 0) * 100)}
               onChange={(e) => {
-                const v = Number(e.target.value) / 100;
+                const parsed = parseNumericInput(e.target.value);
+                if (parsed === null) return;
+                const v = clampRange(parsed, 0, 100) / 100;
                 const nextStops = safeStops.map((st, i) => (i === idx ? { ...st, offset: v } : st));
                 updateShapeProps(selected, (prev) => applyPath(prev, field, nextStops));
               }}
-              style={inputStyle}
+              style={numberInputStyle}
             />
           </label>
         </div>
@@ -1069,4 +1142,17 @@ const inputStyle: React.CSSProperties = {
   background: "var(--control)",
   color: "var(--text)",
   padding: "0 8px",
+  width: "100%",
+  minWidth: 0,
+  boxSizing: "border-box",
+  transition: "border-color 120ms ease, background-color 120ms ease",
+};
+
+const numberInputStyle: React.CSSProperties = {
+  ...inputStyle,
+  padding: "0 24px 0 8px",
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 };

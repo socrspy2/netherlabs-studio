@@ -3,11 +3,12 @@ import * as PIXI from "pixi.js";
 import { useEditor } from "../../state/editorStore";
 import { useAssets } from "../../state/assetStore";
 import { Asset, Fill, ImageShape, LayerNode, MediaFill, MediaFillMode, PathShape, Shape, Stroke, TextShape } from "../../state/types";
+import { clampRange, ensureFiniteNumber } from "../../utils/numeric";
 
 const DEFAULT_ARTBOARD = { width: 1800, height: 1200 };
 
 export function PixiDocumentView() {
-  const { doc } = useEditor();
+  const { resolvedDoc: doc } = useEditor();
   const { assetsById } = useAssets();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const appRef = useRef<PIXI.Application | null>(null);
@@ -231,6 +232,173 @@ export function PixiDocumentView() {
 
 const textureCache = new Map<string, PIXI.Texture>();
 const textureLoading = new Set<string>();
+const warnedFields = new Set<string>();
+
+function warnInvalid(field: string, value: any, shapeId?: string) {
+  const key = shapeId ? `${field}:${shapeId}` : field;
+  if (warnedFields.has(key)) return;
+  warnedFields.add(key);
+  console.warn(`[render] Recovered invalid ${field}`, { value, shapeId });
+}
+
+function sanitizeShape<T extends Shape>(shape: T): T {
+  const clone = structuredClone(shape) as any as T;
+  const shapeId = (shape as any).id;
+  const safeNumber = (field: string, value: number | null | undefined, fallback = 0) => {
+    if (!Number.isFinite(value)) {
+      warnInvalid(field, value, shapeId);
+      return fallback;
+    }
+    return value as number;
+  };
+
+  clone.x = safeNumber("x", shape.x, 0);
+  clone.y = safeNumber("y", shape.y, 0);
+  clone.width = Math.max(1, safeNumber("width", shape.width, 1));
+  clone.height = Math.max(1, safeNumber("height", shape.height, 1));
+  clone.rotation = safeNumber("rotation", shape.rotation, 0);
+  clone.opacity = clampRange(safeNumber("opacity", shape.opacity, 1), 0, 1);
+  if (clone.radius) {
+    clone.radius = {
+      tl: Math.max(0, safeNumber("radius.tl", (clone.radius as any).tl, 0)),
+      tr: Math.max(0, safeNumber("radius.tr", (clone.radius as any).tr, 0)),
+      br: Math.max(0, safeNumber("radius.br", (clone.radius as any).br, 0)),
+      bl: Math.max(0, safeNumber("radius.bl", (clone.radius as any).bl, 0)),
+    };
+  }
+  if (clone.stroke) {
+    clone.stroke = sanitizeStroke(clone.stroke as Stroke);
+  }
+  if (clone.fill) {
+    clone.fill = sanitizeFill(clone.fill as Fill);
+  }
+  if ((clone as any).shadow) {
+    const shadow = (clone as any).shadow;
+    (clone as any).shadow = {
+      enabled: shadow.enabled !== false,
+      x: safeNumber("shadow.x", shadow.x, 0),
+      y: safeNumber("shadow.y", shadow.y, 0),
+      blur: Math.max(0, safeNumber("shadow.blur", shadow.blur, 0)),
+      spread: Math.max(0, safeNumber("shadow.spread", shadow.spread, 0)),
+      color: shadow.color ?? "#000000",
+      opacity: clampRange(safeNumber("shadow.opacity", shadow.opacity, 0.16), 0, 1),
+      quality: shadow.quality ?? "medium",
+    };
+  }
+  if ((clone as any).glow) {
+    const glow = (clone as any).glow;
+    (clone as any).glow = {
+      enabled: glow.enabled ?? false,
+      mode: glow.mode ?? "outer",
+      color: glow.color ?? "#4f46e5",
+      opacity: clampRange(safeNumber("glow.opacity", glow.opacity, 0.35), 0, 1),
+      blur: Math.max(0, safeNumber("glow.blur", glow.blur, 0)),
+      spread: Math.max(0, safeNumber("glow.spread", glow.spread, 0)),
+      offset: {
+        x: safeNumber("glow.offset.x", glow.offset?.x, 0),
+        y: safeNumber("glow.offset.y", glow.offset?.y, 0),
+      },
+      quality: glow.quality ?? "medium",
+    };
+  }
+  if ((clone as any).effects) {
+    const effects = (clone as any).effects;
+    (clone as any).effects = {
+      blur: Math.max(0, safeNumber("effects.blur", effects.blur, 0)),
+      backgroundBlur: Math.max(0, safeNumber("effects.backgroundBlur", effects.backgroundBlur, 0)),
+    };
+  }
+  if (clone.type === "path") {
+    const path = clone as any as PathShape;
+    path.points = (path.points ?? []).map((pt, idx) => ({
+      x: safeNumber(`path.point.${idx}.x`, pt.x, 0),
+      y: safeNumber(`path.point.${idx}.y`, pt.y, 0),
+      in: pt.in
+        ? { x: safeNumber(`path.point.${idx}.in.x`, pt.in.x, pt.x), y: safeNumber(`path.point.${idx}.in.y`, pt.in.y, pt.y) }
+        : null,
+      out: pt.out
+        ? { x: safeNumber(`path.point.${idx}.out.x`, pt.out.x, pt.x), y: safeNumber(`path.point.${idx}.out.y`, pt.out.y, pt.y) }
+        : null,
+      pointType: pt.pointType ?? "corner",
+    }));
+    path.closed = Boolean(path.closed);
+  }
+  if ((clone as any).fontSize !== undefined) {
+    (clone as any).fontSize = Math.max(1, safeNumber("fontSize", (clone as any).fontSize, 16));
+  }
+  if ((clone as any).lineHeight !== undefined) {
+    (clone as any).lineHeight = Math.max(0.1, safeNumber("lineHeight", (clone as any).lineHeight, 1.2));
+  }
+  if ((clone as any).fontWeight !== undefined) {
+    (clone as any).fontWeight = Math.max(0, safeNumber("fontWeight", (clone as any).fontWeight, 400));
+  }
+  if ((clone as any).letterSpacing !== undefined) {
+    (clone as any).letterSpacing = safeNumber("letterSpacing", (clone as any).letterSpacing, 0);
+  }
+  return clone as T;
+}
+
+function sanitizeFill(fill: Fill): Fill {
+  if (fill.kind === "solid") {
+    return {
+      ...fill,
+      opacity: clampRange(ensureFiniteNumber(fill.opacity, 1), 0, 1),
+      color: fill.color ?? "#ffffff",
+    };
+  }
+  if (fill.kind === "linear") {
+    const stops = (fill.stops ?? []).map((s, idx) => ({
+      offset: clampRange(ensureFiniteNumber(s.offset, 0), 0, 1),
+      color: s.color ?? "#ffffff",
+      opacity: clampRange(ensureFiniteNumber(s.opacity, 1), 0, 1),
+    }));
+    if (!stops.length) {
+      stops.push({ offset: 0, color: "#ffffff", opacity: 1 }, { offset: 1, color: "#000000", opacity: 1 });
+    }
+    return {
+      ...fill,
+      angle: ensureFiniteNumber(fill.angle, 0),
+      stops,
+    };
+  }
+  const media = fill as MediaFill;
+  return {
+    ...media,
+    scale: Math.max(0, ensureFiniteNumber(media.scale, 1)),
+    offset: {
+      x: ensureFiniteNumber(media.offset?.x, 0),
+      y: ensureFiniteNumber(media.offset?.y, 0),
+    },
+    repeat: media.repeat ?? false,
+  };
+}
+
+function sanitizeStroke(stroke: Stroke): Stroke {
+  if ((stroke as any).kind === "solid") {
+    const solid = stroke as any;
+    return {
+      ...solid,
+      width: Math.max(0, ensureFiniteNumber(solid.width, 1)),
+      opacity: clampRange(ensureFiniteNumber(solid.opacity, 1), 0, 1),
+    };
+  }
+  const grad = stroke as any;
+  const stops = (grad.stops ?? []).map((s: any) => ({
+    offset: clampRange(ensureFiniteNumber(s.offset, 0), 0, 1),
+    color: s.color ?? "#ffffff",
+    opacity: clampRange(ensureFiniteNumber(s.opacity, 1), 0, 1),
+  }));
+  if (!stops.length) {
+    stops.push({ offset: 0, color: "#ffffff", opacity: 1 }, { offset: 1, color: "#000000", opacity: 1 });
+  }
+  return {
+    ...grad,
+    angle: ensureFiniteNumber(grad.angle, 0),
+    width: Math.max(0, ensureFiniteNumber(grad.width, 1)),
+    opacity: clampRange(ensureFiniteNumber(grad.opacity, 1), 0, 1),
+    stops,
+  } as any;
+}
 
 function buildShape(shape: Shape, assets: Map<string, Asset>, onTextureReady: () => void): PIXI.Container | null {
   if (!shape.visible) return null;
@@ -553,14 +721,15 @@ function createMediaSprite(
 }
 
 function buildMaskContainer(shape: Shape, masks?: any[]) {
+  const normalizedShape = sanitizeShape(shape);
   const maskRoot = new PIXI.Container();
-  const baseMask = buildMaskGraphics({ ...shape, x: 0, y: 0 } as Shape);
+  const baseMask = buildMaskGraphics({ ...normalizedShape, x: 0, y: 0 } as Shape);
   if (baseMask) maskRoot.addChild(baseMask);
 
   (masks ?? []).forEach((mask: any) => {
     if (!mask || mask.visible === false) return;
     if (mask.kind === "shape" && mask.shape) {
-      const g = buildMaskGraphics(mask.shape as Shape, mask.inverted ? shape : undefined, mask.inverted);
+      const g = buildMaskGraphics(sanitizeShape(mask.shape as Shape), mask.inverted ? normalizedShape : undefined, mask.inverted);
       if (g) maskRoot.addChild(g);
     }
   });
@@ -581,7 +750,15 @@ function buildDropShadowLayer(shape: Shape, assets: Map<string, Asset>, onTextur
   const display = buildBaseDisplay(effectShape, assets, onTextureReady);
   if (!display) return null;
   const blurStrength = Math.max(0, shadow.blur ?? 0);
-  const blur = new PIXI.BlurFilter({ strength: blurStrength, quality: 4, resolution: 1 }) as any;
+  const quality = shadow.quality ?? "medium";
+  // Higher sample counts/resolution for visibly smoother shadows
+  const qualitySettings =
+    quality === "high"
+      ? { quality: 14, resolution: 1.3 }
+      : quality === "low"
+        ? { quality: 7, resolution: 1 }
+        : { quality: 10, resolution: 1.15 };
+  const blur = new PIXI.BlurFilter({ strength: blurStrength, ...qualitySettings }) as any;
   blur.padding = Math.max(shadow.spread ?? 0, blur.padding ?? 0);
   (display as any).filters = [blur];
   if ("tint" in (display as any)) (display as any).tint = parseColor(color).color;
@@ -599,7 +776,15 @@ function buildGlowLayer(shape: Shape, assets: Map<string, Asset>, onTextureReady
   const display = buildBaseDisplay(effectShape, assets, onTextureReady);
   if (!display) return null;
   const blurStrength = Math.max(0, glow.blur ?? 0);
-  const blur = new PIXI.BlurFilter({ strength: blurStrength, quality: 4, resolution: 1 }) as any;
+  const quality = glow.quality ?? "medium";
+  // Higher sample counts/resolution for visibly smoother glows
+  const qualitySettings =
+    quality === "high"
+      ? { quality: 14, resolution: 1.3 }
+      : quality === "low"
+        ? { quality: 7, resolution: 1 }
+        : { quality: 10, resolution: 1.15 };
+  const blur = new PIXI.BlurFilter({ strength: blurStrength, ...qualitySettings }) as any;
   blur.padding = Math.max(glow.spread ?? 0, blur.padding ?? 0);
   (display as any).filters = [blur];
   (display as any).blendMode = "screen" as any;
@@ -718,13 +903,22 @@ function applyTransform(display: PIXI.Container, shape: Shape) {
 }
 
 function deriveMatrix(shape: Shape) {
-  // Use fromMatrix to satisfy DOMMatrix ctor typing (string | number[]) while accepting stored DOMMatrix values
-  const base = shape.matrix
-    ? DOMMatrix.fromMatrix(shape.matrix as DOMMatrixInit)
-    : new DOMMatrix().rotate(shape.rotation ?? 0);
-  base.e = shape.x;
-  base.f = shape.y;
-  return base;
+  const sx = (shape as any).scale?.x ?? 1;
+  const sy = (shape as any).scale?.y ?? 1;
+  if (shape.matrix) {
+    const base = DOMMatrix.fromMatrix(shape.matrix as DOMMatrixInit);
+    base.e = shape.x;
+    base.f = shape.y;
+    base.a *= sx;
+    base.b *= sx;
+    base.c *= sy;
+    base.d *= sy;
+    return base;
+  }
+  const theta = ((shape.rotation ?? 0) * Math.PI) / 180;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  return new DOMMatrix([cos * sx, sin * sx, -sin * sy, cos * sy, shape.x, shape.y]);
 }
 
 function toPixiFill(fill: Fill) {
@@ -834,20 +1028,21 @@ function toPixiBlendMode(mode: Shape["blendMode"] | undefined) {
 }
 
 function buildMaskGraphics(shape: Shape, bounds?: Shape, inverted = false) {
+  const safeShape = sanitizeShape(shape);
   const g = new PIXI.Graphics();
-  g.x = shape.x ?? 0;
-  g.y = shape.y ?? 0;
-  g.rotation = degToRad(shape.rotation ?? 0);
+  g.x = safeShape.x ?? 0;
+  g.y = safeShape.y ?? 0;
+  g.rotation = degToRad(safeShape.rotation ?? 0);
   const drawMask = () => {
-    if (shape.type === "rectangle" || shape.type === "ellipse" || shape.type === "line" || shape.type === "path") {
-      drawShapePath(g, shape);
+    if (safeShape.type === "rectangle" || safeShape.type === "ellipse" || safeShape.type === "line" || safeShape.type === "path") {
+      drawShapePath(g, safeShape);
       return;
     }
-    g.rect(0, 0, shape.width, shape.height);
+    g.rect(0, 0, safeShape.width, safeShape.height);
   };
 
   if (inverted) {
-    const area = bounds ?? shape;
+    const area = bounds ? sanitizeShape(bounds) : safeShape;
     g.rect(0, 0, area.width, area.height);
     if ((g as any).beginHole) {
       (g as any).beginHole();
@@ -860,8 +1055,8 @@ function buildMaskGraphics(shape: Shape, bounds?: Shape, inverted = false) {
 
   drawMask();
   g.fill(0xffffff);
-  if (shape.type === "line") {
-    g.stroke({ width: Math.max(1, (shape.stroke as any)?.width ?? 2), color: 0xffffff, alpha: 1 } as any);
+  if (safeShape.type === "line") {
+    g.stroke({ width: Math.max(1, (safeShape.stroke as any)?.width ?? 2), color: 0xffffff, alpha: 1 } as any);
   }
   return g;
 }
@@ -896,7 +1091,7 @@ function renderNodes(args: {
       continue;
     }
 
-    const shape = node.shape;
+    const shape = sanitizeShape(node.shape);
     const bg = shape.effects?.backgroundBlur ?? 0;
     if (bg > 0) {
       const rt = (PIXI as any).RenderTexture.create({

@@ -18,6 +18,18 @@ import {
   ViewportState,
   GridSettings,
 } from "./types";
+import {
+  AnimationState,
+  AnimatableProperty,
+  ClipTrigger,
+  DEFAULT_ANIMATION_STATE,
+  AnimationSegment,
+  applyAnimationToDocument,
+  detectChangedProperties,
+  getPropertyDescriptor,
+  insertKeyframe,
+  normalizeSequence,
+} from "./animation";
 
 export const DEFAULT_GRID: GridSettings = { size: 10, color: "#94a3b8", visible: true, magnetic: true };
 
@@ -28,13 +40,39 @@ type History = {
 
 type EditorContextValue = {
   doc: EditorDocument;
+  resolvedDoc: EditorDocument;
   history: History;
+  animation: AnimationState;
   checkpoint: () => void;
   setCanvasBackground: (bg: EditorDocument["canvasBackground"]) => void;
   setCanvasSize: (size: EditorDocument["canvasSize"]) => void;
   setGrid: (grid: Partial<GridSettings>) => void;
   preview: boolean;
   setPreview: (v: boolean) => void;
+  setTimelineOpen: (v: boolean) => void;
+  setPlayhead: (frame: number) => void;
+  play: () => void;
+  pause: () => void;
+  stop: () => void;
+  setTimelineRange: (range: { start: number; end: number }) => void;
+  setTimelineFps: (fps: number) => void;
+  setTimelineDuration: (frames: number) => void;
+  setTimelineZoom: (zoom: number) => void;
+  toggleLoop: () => void;
+  toggleSnapping: () => void;
+  toggleAutoKeyframe: () => void;
+  addMarker: (frame: number, label?: string) => void;
+  removeMarker: (id: string) => void;
+  createAnimatedTrack: (id: string, prop: AnimatableProperty) => void;
+  addKeyframeAtPlayhead: (id: string, prop: AnimatableProperty, segmentId?: string) => void;
+  moveKeyframe: (keyframeId: string, frame: number) => void;
+  updateKeyframeEasing: (keyframeId: string, easing: { easeIn?: any; easeOut?: any }) => void;
+  selectKeyframe: (id: string | null) => void;
+  setSequenceTriggers: (targetId: string, segmentId: string, triggers: ClipTrigger[]) => void;
+  addSegment: (targetId: string, name?: string) => AnimationSegment | null;
+  updateSegment: (targetId: string, segmentId: string, changes: Partial<AnimationSegment>) => void;
+  deleteSegment: (targetId: string, segmentId: string) => void;
+  playSegment: (targetId: string, segmentId: string) => void;
   setTool: (tool: ToolId) => void;
   setSelection: (ids: string[], additive?: boolean) => void;
   clearSelection: () => void;
@@ -42,20 +80,20 @@ type EditorContextValue = {
   createShape: (shape: Shape) => void;
   updateShapeProps: (id: string, changes: Partial<Shape> | ((shape: Shape) => Shape)) => void;
   applyShapePatches: (patches: { id: string; changes: Partial<Shape> | ((shape: Shape) => Shape) }[], pushHistory?: boolean) => void;
-  moveSelection: (dx: number, dy: number, pushHistory?: boolean) => void;
-  resizeSelection: (rect: { x: number; y: number; width: number; height: number }, pushHistory?: boolean) => void;
-  rotateSelection: (rotation: number, pushHistory?: boolean) => void;
-  deleteSelection: () => void;
-  duplicateSelection: () => void;
-  bring: (dir: "front" | "back" | "up" | "down") => void;
+  moveSelection: (dx: number, dy: number, pushHistory?: boolean, ids?: string[]) => void;
+  resizeSelection: (rect: { x: number; y: number; width: number; height: number }, pushHistory?: boolean, ids?: string[]) => void;
+  rotateSelection: (rotation: number, pushHistory?: boolean, ids?: string[]) => void;
+  deleteSelection: (ids?: string[]) => void;
+  duplicateSelection: (ids?: string[]) => void;
+  bring: (dir: "front" | "back" | "up" | "down", ids?: string[]) => void;
   moveLayer: (draggedId: string, targetId: string, position: "before" | "after") => void;
-  makeMaskFromSelection: () => void;
+  makeMaskFromSelection: (ids?: string[]) => void;
   toggleMask: (id: string, maskId?: string) => void;
   toggleVisible: (id: string) => void;
   toggleLocked: (id: string) => void;
   renameLayer: (id: string, name: string) => void;
-  groupSelected: () => void;
-  ungroupSelected: () => void;
+  groupSelected: (ids?: string[]) => void;
+  ungroupSelected: (ids?: string[]) => void;
   undo: () => void;
   redo: () => void;
 };
@@ -81,6 +119,7 @@ function baseShape(type: Shape["type"], name: string, x: number, y: number): Sha
     blur: 16,
     spread: 4,
     offset: { x: 0, y: 0 },
+    quality: "medium" as const,
   };
 
   const common = {
@@ -91,6 +130,7 @@ function baseShape(type: Shape["type"], name: string, x: number, y: number): Sha
     y,
     width: 160,
     height: 120,
+    scale: { x: 1, y: 1 },
     rotation: 0,
     opacity: 1,
     visible: true,
@@ -98,7 +138,7 @@ function baseShape(type: Shape["type"], name: string, x: number, y: number): Sha
     fill: fillDefault,
     stroke: strokeDefault,
     radius: { tl: 8, tr: 8, br: 8, bl: 8 },
-    shadow: { enabled: true, x: 0, y: 4, blur: 12, spread: 0, color: "#000000", opacity: 0.16 },
+    shadow: { enabled: true, x: 0, y: 4, blur: 12, spread: 0, color: "#000000", opacity: 0.16, quality: "medium" },
     glow: glowDefault,
     effects: { blur: 0, backgroundBlur: 0 },
     blendMode: "normal",
@@ -175,11 +215,33 @@ function initialDoc(): EditorDocument {
   text.width = 260;
   text.height = 140;
 
+  const maskShape = baseShape("rectangle", "Mask", 960, 320);
+  maskShape.width = 220;
+  maskShape.height = 180;
+  maskShape.fill = { enabled: true, kind: "solid", color: "#0ea5e9", opacity: 0.6 };
+  const maskedShape = baseShape("ellipse", "Masked layer", 960, 320);
+  maskedShape.width = 240;
+  maskedShape.height = 200;
+  maskedShape.fill = { enabled: true, kind: "solid", color: "#c084fc", opacity: 0.9 };
+  const maskGroup: LayerNode = {
+    id: `mask_${crypto.randomUUID()}`,
+    kind: "group",
+    name: "Masked demo",
+    visible: true,
+    locked: false,
+    mask: { enabled: true, maskId: maskShape.id },
+    children: [
+      { id: maskShape.id, kind: "shape", shape: maskShape },
+      { id: maskedShape.id, kind: "shape", shape: maskedShape },
+    ],
+  };
+
   return {
     layers: [
       { id: rect.id, kind: "shape", shape: rect },
       { id: ellipse.id, kind: "shape", shape: ellipse },
       { id: text.id, kind: "shape", shape: text },
+      maskGroup,
     ],
     selection: [rect.id],
     tool: "select",
@@ -194,6 +256,8 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
   const [doc, setDoc] = useState<EditorDocument>(() => initialDoc());
   const [history, setHistory] = useState<History>({ past: [], future: [] });
   const [preview, setPreview] = useState(false);
+  const [animation, setAnimation] = useState<AnimationState>(() => DEFAULT_ANIMATION_STATE);
+  const resolvedDoc = useMemo(() => applyAnimationToDocument(doc, animation), [doc, animation]);
 
   const checkpoint = useCallback(() => {
     setHistory((h) => ({
@@ -227,17 +291,46 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  const autoKeyframeChanges = useCallback(
+    (prevDoc: EditorDocument, nextDoc: EditorDocument, ids: string[]) => {
+      setAnimation((anim) => {
+        if (!anim.open || !anim.autoKeyframe || anim.playing) return anim;
+        let nextState = anim;
+        const frame = Math.max(anim.range.start, Math.min(anim.range.end, Math.round(anim.playhead)));
+        ids.forEach((id) => {
+          const prevNode = flatten(prevDoc.layers).find((n) => n.id === id);
+          const nextNode = flatten(nextDoc.layers).find((n) => n.id === id);
+          if (!prevNode || !nextNode || prevNode.kind !== "shape" || nextNode.kind !== "shape") return;
+          const changed = detectChangedProperties(prevNode.shape, nextNode.shape);
+          changed.forEach((prop) => {
+            const def = getPropertyDescriptor(prop);
+            const value = def.get(nextNode.shape);
+            if (value == null) return;
+            const res = insertKeyframe(nextState, id, prop, frame, value, nextNode.shape.name);
+            nextState = res.state;
+          });
+        });
+        return nextState;
+      });
+    },
+    []
+  );
+
   const commit = useCallback(
-    (next: EditorDocument, pushHistory = true) => {
+    (next: EditorDocument, pushHistory = true, changedIds?: string[]) => {
+      const prev = doc;
       setDoc(next);
       if (pushHistory) {
         setHistory((h) => ({
-          past: [...h.past.slice(-40), doc],
+          past: [...h.past.slice(-40), prev],
           future: [],
         }));
       }
+      if (changedIds?.length) {
+        autoKeyframeChanges(prev, next, changedIds);
+      }
     },
-    [doc]
+    [autoKeyframeChanges, doc]
   );
 
   const setTool = useCallback((tool: ToolId) => {
@@ -264,7 +357,7 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       const nextDoc = structuredClone(doc);
       nextDoc.layers.push({ id: shape.id, kind: "shape", shape });
       nextDoc.selection = [shape.id];
-      commit(nextDoc);
+      commit(nextDoc, true, [shape.id]);
     },
     [commit, doc]
   );
@@ -278,7 +371,8 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
           typeof patch.changes === "function" ? (patch.changes as any)(shape) : { ...shape, ...patch.changes }
         );
       }
-      commit(next, pushHistory);
+      const changedIds = Array.from(new Set(patches.map((p) => p.id)));
+      commit(next, pushHistory, changedIds);
     },
     [commit, doc]
   );
@@ -287,28 +381,30 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
     (id: string, changes: Partial<Shape> | ((shape: Shape) => Shape)) => {
       const next = structuredClone(doc);
       updateShape(next.layers, id, (shape) => (typeof changes === "function" ? (changes as any)(shape) : { ...shape, ...changes }));
-      commit(next);
+      commit(next, true, [id]);
     },
     [commit, doc]
   );
 
   const moveSelection = useCallback(
-    (dx: number, dy: number, pushHistory = false) => {
-      if (!doc.selection.length) return;
+    (dx: number, dy: number, pushHistory = false, ids?: string[]) => {
+      const targetIds = ids ?? doc.selection;
+      if (!targetIds.length) return;
       const next = structuredClone(doc);
-      for (const id of doc.selection) {
+      for (const id of targetIds) {
         updateShape(next.layers, id, (shape) => ({ ...shape, x: shape.x + dx, y: shape.y + dy }));
       }
-      commit(next, pushHistory);
+      commit(next, pushHistory, targetIds);
     },
     [commit, doc]
   );
 
   const resizeSelection = useCallback(
-    (rect: { x: number; y: number; width: number; height: number }, pushHistory = false) => {
-      if (!doc.selection.length) return;
+    (rect: { x: number; y: number; width: number; height: number }, pushHistory = false, ids?: string[]) => {
+      const targetIds = ids ?? doc.selection;
+      if (!targetIds.length) return;
       const next = structuredClone(doc);
-      for (const id of doc.selection) {
+      for (const id of targetIds) {
         updateShape(next.layers, id, (shape) => ({
           ...shape,
           x: rect.x,
@@ -317,58 +413,359 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
           height: Math.max(4, rect.height),
         }));
       }
-      commit(next, pushHistory);
+      commit(next, pushHistory, targetIds);
     },
     [commit, doc]
   );
 
   const rotateSelection = useCallback(
-    (rotation: number, pushHistory = false) => {
-      if (!doc.selection.length) return;
+    (rotation: number, pushHistory = false, ids?: string[]) => {
+      const targetIds = ids ?? doc.selection;
+      if (!targetIds.length) return;
       const next = structuredClone(doc);
-      for (const id of doc.selection) {
+      for (const id of targetIds) {
         updateShape(next.layers, id, (shape) => ({ ...shape, rotation }));
       }
-      commit(next, pushHistory);
+      commit(next, pushHistory, targetIds);
     },
     [commit, doc]
   );
 
-  const deleteSelection = useCallback(() => {
-    if (!doc.selection.length) return;
-    const ids = new Set(doc.selection);
-    const next = structuredClone(doc);
-    next.layers = removeNodes(next.layers, ids);
-    next.selection = [];
-    commit(next);
-  }, [commit, doc]);
+  const setTimelineOpen = useCallback((open: boolean) => {
+    setAnimation((a) => ({ ...a, open, playing: open ? a.playing : false }));
+  }, []);
 
-  const duplicateSelection = useCallback(() => {
-    if (!doc.selection.length) return;
-    const next = structuredClone(doc);
-    const all = flatten(next.layers);
-    const created: string[] = [];
-    for (const id of doc.selection) {
-      const found = all.find((n) => n.id === id);
-      if (found && found.kind === "shape") {
-        const copy: ShapeNode = {
-          id: crypto.randomUUID(),
-          kind: "shape",
-          shape: { ...found.shape, id: crypto.randomUUID(), name: `${found.shape.name} Copy`, x: found.shape.x + 16, y: found.shape.y + 16 },
-        };
-        next.layers.push(copy);
-        created.push(copy.id);
+  const setPlayhead = useCallback((frame: number) => {
+    setAnimation((a) => ({
+      ...a,
+      playhead: Math.max(a.range.start, Math.min(a.range.end, Number.isFinite(frame) ? frame : a.playhead)),
+    }));
+  }, []);
+
+  const play = useCallback(() => {
+    setAnimation((a) => ({ ...a, open: true, playing: true, lastWarning: null }));
+  }, []);
+
+  const pause = useCallback(() => {
+    setAnimation((a) => ({ ...a, playing: false }));
+  }, []);
+
+  const stop = useCallback(() => {
+    setAnimation((a) => ({ ...a, playing: false, playhead: a.range.start, activeSegmentId: null }));
+  }, []);
+
+  const setTimelineRange = useCallback((range: { start: number; end: number }) => {
+    setAnimation((a) => {
+      const start = Math.max(0, Math.min(range.start, range.end));
+      const end = Math.max(start, Math.min(range.end, a.duration));
+      return { ...a, range: { start, end }, playhead: Math.min(Math.max(a.playhead, start), end) };
+    });
+  }, []);
+
+  const setTimelineFps = useCallback((fps: number) => {
+    setAnimation((a) => ({ ...a, fps: Math.max(1, Math.min(240, Math.round(fps) || a.fps)) }));
+  }, []);
+
+  const setTimelineDuration = useCallback((frames: number) => {
+    setAnimation((a) => {
+      const duration = Math.max(1, Math.round(frames) || a.duration);
+      const end = Math.min(duration, Math.max(a.range.end, a.range.start));
+      const start = Math.min(a.range.start, end);
+      return { ...a, duration, range: { start, end }, playhead: Math.min(a.playhead, end) };
+    });
+  }, []);
+
+  const setTimelineZoom = useCallback((zoom: number) => {
+    setAnimation((a) => ({ ...a, zoom: Math.max(0.25, Math.min(4, zoom || a.zoom)) }));
+  }, []);
+
+  const toggleLoop = useCallback(() => {
+    setAnimation((a) => ({ ...a, loop: !a.loop }));
+  }, []);
+
+  const toggleSnapping = useCallback(() => {
+    setAnimation((a) => ({ ...a, snapping: !a.snapping }));
+  }, []);
+
+  const toggleAutoKeyframe = useCallback(() => {
+    setAnimation((a) => ({ ...a, autoKeyframe: !a.autoKeyframe }));
+  }, []);
+
+  const addMarker = useCallback((frame: number, label?: string) => {
+    setAnimation((a) => ({
+      ...a,
+      markers: [...a.markers, { id: `marker_${crypto.randomUUID()}`, frame, label: label || `Marker ${a.markers.length + 1}` }],
+    }));
+  }, []);
+
+  const removeMarker = useCallback((id: string) => {
+    setAnimation((a) => ({ ...a, markers: a.markers.filter((m) => m.id !== id) }));
+  }, []);
+
+  const createAnimatedTrack = useCallback(
+    (id: string, prop: AnimatableProperty) => {
+      const node = flatten(resolvedDoc.layers).find((n) => n.kind === "shape" && n.id === id) as ShapeNode | undefined;
+      if (!node) return;
+      const def = getPropertyDescriptor(prop);
+      const value = def.get(node.shape);
+      if (value == null) return;
+      setAnimation((anim) => {
+        const res = insertKeyframe(anim, id, prop, Math.round(anim.playhead), value, node.shape.name);
+        return { ...res.state, open: true };
+      });
+    },
+    [resolvedDoc.layers]
+  );
+
+  const addKeyframeAtPlayhead = useCallback(
+    (id: string, prop: AnimatableProperty, segmentId?: string) => {
+      const node = flatten(resolvedDoc.layers).find((n) => n.kind === "shape" && n.id === id) as ShapeNode | undefined;
+      if (!node) return;
+      const def = getPropertyDescriptor(prop);
+      const value = def.get(node.shape);
+      if (value == null) return;
+      setAnimation((anim) => insertKeyframe(anim, id, prop, Math.round(anim.playhead), value, node.shape.name, segmentId).state);
+    },
+    [resolvedDoc.layers]
+  );
+
+  const moveKeyframe = useCallback((keyframeId: string, frame: number) => {
+    setAnimation((anim) => {
+      let updated = false;
+      const nextSequences = anim.sequences.map((seq) => {
+        const normalized = normalizeSequence(seq);
+        const nextSegments = normalized.segments.map((segment) => {
+          let segChanged = false;
+          const nextTracks = segment.tracks.map((track) => {
+            const idx = track.keyframes.findIndex((k) => k.id === keyframeId);
+            if (idx === -1) return track;
+            segChanged = true;
+            updated = true;
+            const nextTrack = { ...track };
+            const kf = { ...nextTrack.keyframes[idx], frame: Math.round(frame) };
+            const keyframes = [...nextTrack.keyframes];
+            keyframes.splice(idx, 1, kf);
+            keyframes.sort((a, b) => a.frame - b.frame);
+            nextTrack.keyframes = keyframes;
+            return nextTrack;
+          });
+          return segChanged ? { ...segment, tracks: nextTracks } : segment;
+        });
+        return { ...normalized, segments: nextSegments };
+      });
+      if (!updated) return anim;
+      return { ...anim, sequences: nextSequences, selectedKeyframeId: keyframeId };
+    });
+  }, []);
+
+  const updateKeyframeEasing = useCallback((keyframeId: string, easing: { easeIn?: any; easeOut?: any }) => {
+    setAnimation((anim) => {
+      let updated = false;
+      const nextSequences = anim.sequences.map((seq) => {
+        const normalized = normalizeSequence(seq);
+        const nextSegments = normalized.segments.map((segment) => {
+          const nextTracks = segment.tracks.map((track) => {
+            const idx = track.keyframes.findIndex((k) => k.id === keyframeId);
+            if (idx === -1) return track;
+            updated = true;
+            const nextTrack = { ...track };
+            const keyframes = [...nextTrack.keyframes];
+            const kf = { ...keyframes[idx] };
+            if (easing.easeIn !== undefined) kf.easeIn = easing.easeIn;
+            if (easing.easeOut !== undefined) kf.easeOut = easing.easeOut;
+            keyframes.splice(idx, 1, kf);
+            nextTrack.keyframes = keyframes;
+            return nextTrack;
+          });
+          return { ...segment, tracks: nextTracks };
+        });
+        return { ...normalized, segments: nextSegments };
+      });
+      if (!updated) return anim;
+      return { ...anim, sequences: nextSequences };
+    });
+  }, []);
+
+  const selectKeyframe = useCallback((id: string | null) => {
+    setAnimation((a) => ({ ...a, selectedKeyframeId: id ?? null }));
+  }, []);
+
+  const setSequenceTriggers = useCallback((targetId: string, segmentId: string, triggers: ClipTrigger[]) => {
+    setAnimation((a) => ({
+      ...a,
+      sequences: a.sequences.map((seq) => {
+        if (seq.targetId !== targetId) return seq;
+        const normalized = normalizeSequence(seq);
+        const nextSegments = normalized.segments.map((seg) =>
+          seg.id === segmentId ? { ...seg, triggers: structuredClone(triggers) } : seg
+        );
+        return { ...normalized, segments: nextSegments };
+      }),
+    }));
+  }, []);
+
+  const addSegment = useCallback(
+    (targetId: string, name?: string) => {
+      const seq = animation.sequences.find((s) => s.targetId === targetId);
+      if (!seq) return null;
+      const normalized = (seq as any).segments?.length ? seq : { ...seq, segments: (seq as any).segments ?? [] };
+      const start = Math.round(animation.playhead);
+      const end = start + Math.max(60, Math.round(animation.fps * 1.5));
+      const segment = {
+        id: `seg_${crypto.randomUUID()}`,
+        targetId,
+        name: name || `Segment ${normalized.segments.length + 1}`,
+        tracks: [],
+        triggers: [],
+        start,
+        end,
+        loop: false,
+        repeatable: true,
+        collapsed: false,
+      } as AnimationSegment;
+      setAnimation((a) => ({
+        ...a,
+        sequences: a.sequences.map((s) => (s.id === seq.id ? { ...normalizeSequence(s as any), segments: [...normalizeSequence(s as any).segments, segment] } : s)),
+      }));
+      return segment;
+    },
+    [animation.fps, animation.playhead, animation.sequences]
+  );
+
+  const updateSegment = useCallback((targetId: string, segmentId: string, changes: Partial<AnimationSegment>) => {
+    setAnimation((a) => ({
+      ...a,
+      sequences: a.sequences.map((seq) => {
+        if (seq.targetId !== targetId) return seq;
+        const normalized = normalizeSequence(seq as any);
+        const nextSegments = normalized.segments.map((seg: any) =>
+          seg.id === segmentId ? { ...seg, ...changes } : seg
+        );
+        return { ...normalized, segments: nextSegments };
+      }),
+    }));
+  }, []);
+
+  const deleteSegment = useCallback((targetId: string, segmentId: string) => {
+    setAnimation((a) => {
+      const sequences = a.sequences
+        .map((seq) => {
+          if (seq.targetId !== targetId) return seq;
+          const normalized = normalizeSequence(seq as any);
+          const remaining = normalized.segments.filter((s) => s.id !== segmentId);
+          if (!remaining.length) return null;
+          return { ...normalized, segments: remaining };
+        })
+        .filter(Boolean) as AnimationState["sequences"];
+      return { ...a, sequences };
+    });
+  }, []);
+
+  const playSegment = useCallback(
+    (targetId: string, segmentId: string) => {
+      const seq = animation.sequences.find((s) => s.targetId === targetId);
+      if (!seq) return;
+      const normalized = normalizeSequence(seq as any);
+      const seg = normalized.segments.find((s) => s.id === segmentId);
+      if (!seg) return;
+      const start = Math.round(seg.start);
+      const end = Math.round(seg.end);
+      setAnimation((a) => ({
+        ...a,
+        open: true,
+        playing: true,
+        playhead: start,
+        range: { start, end },
+        activeSegmentId: `${targetId}:${segmentId}`,
+      }));
+    },
+    [animation.sequences]
+  );
+
+  React.useEffect(() => {
+    if (!animation.playing) return;
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = Math.max(0, (now - last) / 1000);
+      last = now;
+      setAnimation((anim) => {
+        if (!anim.playing) return anim;
+        const frameDelta = dt * anim.fps;
+        let frame = anim.playhead + frameDelta;
+        let playing: boolean = anim.playing;
+        const activeSeg = anim.activeSegmentId
+          ? (() => {
+              const [tid, sid] = (anim.activeSegmentId ?? "").split(":");
+              const seq = anim.sequences.find((s) => s.targetId === tid);
+              const seg = seq ? normalizeSequence(seq as any).segments.find((s) => s.id === sid) : null;
+              return seg ?? null;
+            })()
+          : null;
+        const start = activeSeg ? activeSeg.start : anim.range.start;
+        const end = activeSeg ? activeSeg.end : anim.range.end;
+        if (frame > end) {
+          if ((activeSeg?.loop ?? anim.loop)) frame = start;
+          else {
+            frame = end;
+            playing = false;
+          }
+        }
+        return { ...anim, playhead: frame, playing };
+      });
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame((now) => {
+      last = now;
+      tick(now);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [animation.playing, animation.fps, animation.range.end, animation.range.start]);
+
+  const deleteSelection = useCallback(
+    (ids?: string[]) => {
+      const targets = ids ?? doc.selection;
+      if (!targets.length) return;
+      const idSet = new Set(targets);
+      const next = structuredClone(doc);
+      next.layers = removeNodes(next.layers, idSet);
+      next.selection = next.selection.filter((id) => !idSet.has(id));
+      commit(next);
+    },
+    [commit, doc]
+  );
+
+  const duplicateSelection = useCallback(
+    (ids?: string[]) => {
+      const targets = ids ?? doc.selection;
+      if (!targets.length) return;
+      const next = structuredClone(doc);
+      const all = flatten(next.layers);
+      const created: string[] = [];
+      for (const id of targets) {
+        const found = all.find((n) => n.id === id);
+        if (found && found.kind === "shape") {
+          const copy: ShapeNode = {
+            id: crypto.randomUUID(),
+            kind: "shape",
+            shape: { ...found.shape, id: crypto.randomUUID(), name: `${found.shape.name} Copy`, x: found.shape.x + 16, y: found.shape.y + 16 },
+          };
+          next.layers.push(copy);
+          created.push(copy.id);
+        }
       }
-    }
-    next.selection = created;
-    commit(next);
-  }, [commit, doc]);
+      next.selection = created;
+      commit(next);
+    },
+    [commit, doc]
+  );
 
   const bring = useCallback(
-    (dir: "front" | "back" | "up" | "down") => {
-      if (!doc.selection.length) return;
+    (dir: "front" | "back" | "up" | "down", ids?: string[]) => {
+      const targets = ids ?? doc.selection;
+      if (!targets.length) return;
       const next = structuredClone(doc);
-      next.layers = reorder(next.layers, doc.selection[0], dir);
+      next.layers = reorder(next.layers, targets[0], dir);
       commit(next);
     },
     [commit, doc]
@@ -383,11 +780,13 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
     [commit, doc]
   );
 
-  const makeMaskFromSelection = useCallback(() => {
-    if (doc.selection.length < 2) return;
+  const makeMaskFromSelection = useCallback(
+    (ids?: string[]) => {
+      const targetIds = ids ?? doc.selection;
+      if (targetIds.length < 2) return;
     const next = structuredClone(doc);
     const flat = flatten(next.layers);
-    const selectedNodes = flat.filter((n) => doc.selection.includes(n.id));
+      const selectedNodes = flat.filter((n) => targetIds.includes(n.id));
     const target = selectedNodes.find((n) => n.kind === "shape" && (n as any).shape.type === "image") as ShapeNode | undefined;
     const maskShapes = selectedNodes.filter((n) => n.kind === "shape" && (!target || n.id !== target.id)) as ShapeNode[];
 
@@ -409,16 +808,18 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
         m.shape.visible = false;
       });
       targetShape.masks = masks as any;
-      next.selection = [target.id];
+        next.selection = [target.id];
       commit(next);
       return;
     }
 
-    next.layers = maskGroupWithinSameParent(next.layers, doc.selection, "Mask");
+      next.layers = maskGroupWithinSameParent(next.layers, targetIds, "Mask");
     const grouped = flatten(next.layers).find((n) => n.kind === "group" && n.mask?.enabled);
     next.selection = grouped ? [grouped.id] : [];
     commit(next);
-  }, [commit, doc]);
+    },
+    [commit, doc]
+  );
 
   const toggleMask = useCallback(
     (id: string, maskId?: string) => {
@@ -482,11 +883,13 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
     [commit, doc]
   );
 
-  const groupSelected = useCallback(() => {
-    if (doc.selection.length < 1) return;
+  const groupSelected = useCallback(
+    (ids?: string[]) => {
+      const targetIds = ids ?? doc.selection;
+      if (targetIds.length < 1) return;
     const next = structuredClone(doc);
-    next.layers = groupWithinSameParent(next.layers, doc.selection, "Group");
-    const selectedSet = new Set(doc.selection);
+      next.layers = groupWithinSameParent(next.layers, targetIds, "Group");
+      const selectedSet = new Set(targetIds);
     const grouped = flatten(next.layers).find((n) => {
       if (n.kind !== "group") return false;
       const childIds = new Set(n.children.map((c) => c.id));
@@ -496,15 +899,22 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
     });
     next.selection = grouped ? [grouped.id] : [];
     commit(next);
-  }, [commit, doc]);
+    },
+    [commit, doc]
+  );
 
-  const ungroupSelected = useCallback(() => {
-    if (!doc.selection.length) return;
+  const ungroupSelected = useCallback(
+    (ids?: string[]) => {
+      const targetIds = ids ?? doc.selection;
+      const target = targetIds[0];
+      if (!target) return;
     const next = structuredClone(doc);
-    next.layers = ungroup(next.layers, doc.selection[0]);
+      next.layers = ungroup(next.layers, target);
     next.selection = [];
     commit(next);
-  }, [commit, doc]);
+    },
+    [commit, doc]
+  );
 
   const undo = useCallback(() => {
     setHistory((h) => {
@@ -527,13 +937,39 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<EditorContextValue>(
     () => ({
       doc,
+      resolvedDoc,
       history,
+      animation,
       checkpoint,
       setCanvasBackground,
       setCanvasSize,
       setGrid,
       preview,
       setPreview,
+      setTimelineOpen,
+      setPlayhead,
+      play,
+      pause,
+      stop,
+      setTimelineRange,
+      setTimelineFps,
+      setTimelineDuration,
+      setTimelineZoom,
+      toggleLoop,
+      toggleSnapping,
+      toggleAutoKeyframe,
+      addMarker,
+      removeMarker,
+      createAnimatedTrack,
+      addKeyframeAtPlayhead,
+      moveKeyframe,
+      updateKeyframeEasing,
+      selectKeyframe,
+      setSequenceTriggers,
+      addSegment,
+      updateSegment,
+      deleteSegment,
+      playSegment,
       setTool,
       setSelection,
       clearSelection,
@@ -560,13 +996,39 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       doc,
+      resolvedDoc,
       history,
+      animation,
       checkpoint,
       setCanvasBackground,
       setCanvasSize,
       setGrid,
       preview,
       setPreview,
+      setTimelineOpen,
+      setPlayhead,
+      play,
+      pause,
+      stop,
+      setTimelineRange,
+      setTimelineFps,
+      setTimelineDuration,
+      setTimelineZoom,
+      toggleLoop,
+      toggleSnapping,
+      toggleAutoKeyframe,
+      addMarker,
+      removeMarker,
+      createAnimatedTrack,
+      addKeyframeAtPlayhead,
+      moveKeyframe,
+      updateKeyframeEasing,
+      selectKeyframe,
+      setSequenceTriggers,
+      addSegment,
+      updateSegment,
+      deleteSegment,
+      playSegment,
       setTool,
       setSelection,
       clearSelection,

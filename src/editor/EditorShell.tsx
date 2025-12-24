@@ -4,10 +4,11 @@ import { LeftPanel } from "./LeftPanel";
 import { CanvasViewport } from "./canvas/CanvasViewport";
 import { InspectorPanel } from "./inspector/InspectorPanel";
 import { BottomBar } from "./BottomBar";
+import { TimelinePanel } from "./animation/TimelinePanel";
 import { useEditor } from "../state/editorStore";
 
 export function EditorShell() {
-  const { undo, redo, moveSelection, deleteSelection, duplicateSelection, setTool, preview, setPreview } = useEditor();
+  const { undo, redo, moveSelection, deleteSelection, duplicateSelection, setTool, preview, setPreview, animation } = useEditor();
   const [leftWidth, setLeftWidth] = useState(320);
   const [rightWidth, setRightWidth] = useState(360);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
@@ -38,6 +39,7 @@ export function EditorShell() {
         e.preventDefault();
         return;
       }
+      if (preview) return;
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         const delta = e.shiftKey ? 10 : 1;
         if (e.key === "ArrowUp") moveSelection(0, -delta, true);
@@ -60,7 +62,9 @@ export function EditorShell() {
   return (
     <div
       style={{
+        height: "100vh",
         minHeight: "100vh",
+        overflow: "hidden",
         background: "var(--bg)",
         color: "var(--text)",
         display: "flex",
@@ -75,7 +79,7 @@ export function EditorShell() {
         </div>
       ) : (
         <>
-          <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+          <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
             {!leftCollapsed && (
               <div style={{ flex: `0 0 ${leftWidth}px`, minWidth: leftWidth, maxWidth: leftWidth, height: "100%", minHeight: 0, display: "flex" }}>
                 <LeftPanel />
@@ -93,11 +97,26 @@ export function EditorShell() {
               onToggleCollapse={() => setRightCollapsed((v) => !v)}
             />
             {!rightCollapsed && (
-              <div style={{ flex: `0 0 ${rightWidth}px`, minWidth: rightWidth, maxWidth: rightWidth, height: "100%", minHeight: 0, display: "flex" }}>
+              <div
+                style={{
+                  flex: `0 0 ${rightWidth}px`,
+                  minWidth: rightWidth,
+                  maxWidth: rightWidth,
+                  height: "100%",
+                  minHeight: 0,
+                  display: "flex",
+                  overflow: "hidden",
+                }}
+              >
                 <InspectorPanel />
               </div>
             )}
           </div>
+          {animation.open && (
+            <div style={{ minHeight: 0 }}>
+              <TimelinePanel />
+            </div>
+          )}
           <BottomBar />
         </>
       )}

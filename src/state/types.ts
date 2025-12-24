@@ -13,8 +13,7 @@ export type ToolId =
   | "line"
   | "text"
   | "pen"
-  | "hand"
-  | "zoom";
+  | "hand";
 
 export type StrokeAlign = "center" | "inside" | "outside";
 
@@ -26,6 +25,7 @@ export type Shadow = {
   spread: number;
   color: string;
   opacity: number;
+  quality?: "low" | "medium" | "high";
 };
 
 export type Glow = {
@@ -36,6 +36,7 @@ export type Glow = {
   blur: number;
   spread: number;
   offset: { x: number; y: number };
+  quality?: "low" | "medium" | "high";
 };
 
 export type GradientStop = {
@@ -154,6 +155,7 @@ export type BaseShape = {
   y: number;
   width: number;
   height: number;
+  scale?: { x: number; y: number };
   rotation: number;
   matrix?: DOMMatrix;
   opacity: number;
