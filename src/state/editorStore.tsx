@@ -100,6 +100,92 @@ type EditorContextValue = {
 
 const EditorContext = React.createContext<EditorContextValue | null>(null);
 
+function clamp01(v: number, fallback = 0) {
+  const n = Number.isFinite(v) ? v : fallback;
+  return Math.max(0, Math.min(1, n));
+}
+
+function sanitizeShape(shape: Shape): Shape {
+  const next: any = { ...shape };
+  next.opacity = clamp01(next.opacity ?? 1, 1);
+
+  if (next.fill) {
+    if (next.fill.kind === "solid") {
+      next.fill = { ...next.fill, opacity: clamp01((next.fill as any).opacity ?? 1, 1), enabled: Boolean((next.fill as any).enabled) };
+    } else if (next.fill.kind === "linear") {
+      const stops = ((next.fill as any).stops ?? []).map((s: any) => ({
+        offset: clamp01(s.offset ?? 0),
+        color: s.color ?? "#ffffff",
+        opacity: clamp01(s.opacity ?? 1, 1),
+      }));
+      next.fill = { ...(next.fill as any), stops, enabled: Boolean((next.fill as any).enabled) };
+    }
+  }
+
+  if (next.stroke) {
+    if ((next.stroke as any).kind === "solid") {
+      next.stroke = {
+        ...(next.stroke as any),
+        width: Math.max(0, Number.isFinite((next.stroke as any).width) ? (next.stroke as any).width : 0),
+        opacity: clamp01((next.stroke as any).opacity ?? 1, 1),
+        enabled: Boolean((next.stroke as any).enabled),
+      };
+    } else {
+      const stops = ((next.stroke as any).stops ?? []).map((s: any) => ({
+        offset: clamp01(s.offset ?? 0),
+        color: s.color ?? "#ffffff",
+        opacity: clamp01(s.opacity ?? 1, 1),
+      }));
+      next.stroke = {
+        ...(next.stroke as any),
+        width: Math.max(0, Number.isFinite((next.stroke as any).width) ? (next.stroke as any).width : 0),
+        opacity: clamp01((next.stroke as any).opacity ?? 1, 1),
+        stops,
+        enabled: Boolean((next.stroke as any).enabled),
+      };
+    }
+  }
+
+  if (next.shadow) {
+    next.shadow = {
+      ...next.shadow,
+      x: Number.isFinite(next.shadow.x) ? next.shadow.x : 0,
+      y: Number.isFinite(next.shadow.y) ? next.shadow.y : 0,
+      blur: Math.max(0, Number.isFinite(next.shadow.blur) ? next.shadow.blur : 0),
+      spread: Number.isFinite(next.shadow.spread) ? next.shadow.spread : 0,
+      opacity: clamp01(next.shadow.opacity ?? 0.16, 0.16),
+    };
+  }
+
+  if (next.glow) {
+    next.glow = {
+      ...next.glow,
+      opacity: clamp01(next.glow.opacity ?? 0.35, 0.35),
+      blur: Math.max(0, Number.isFinite(next.glow.blur) ? next.glow.blur : 0),
+      spread: Number.isFinite(next.glow.spread) ? next.glow.spread : 0,
+      offset: {
+        x: Number.isFinite(next.glow.offset?.x) ? next.glow.offset.x : 0,
+        y: Number.isFinite(next.glow.offset?.y) ? next.glow.offset.y : 0,
+      },
+    };
+  }
+
+  if (next.effects) {
+    next.effects = {
+      blur: Math.max(0, Number.isFinite(next.effects.blur) ? next.effects.blur : 0),
+      backgroundBlur: Math.max(0, Number.isFinite(next.effects.backgroundBlur) ? next.effects.backgroundBlur : 0),
+    };
+  }
+
+  next.width = Math.max(0, Number.isFinite(next.width) ? next.width : 0);
+  next.height = Math.max(0, Number.isFinite(next.height) ? next.height : 0);
+  next.x = Number.isFinite(next.x) ? next.x : 0;
+  next.y = Number.isFinite(next.y) ? next.y : 0;
+  next.rotation = Number.isFinite(next.rotation) ? next.rotation : 0;
+
+  return next as Shape;
+}
+
 function baseShape(type: Shape["type"], name: string, x: number, y: number): Shape {
   const fillDefault = { enabled: true, kind: "solid", color: "#4f46e5", opacity: 1 } as Shape["fill"];
   const strokeDefault = {
@@ -246,7 +332,7 @@ function initialDoc(): EditorDocument {
     selection: [rect.id],
     tool: "select",
     viewport: { pan: { x: 120, y: 60 }, zoom: 1 },
-    canvasBackground: { kind: "preset", value: "white" },
+    canvasBackground: { kind: "checkerboard" },
     canvasSize: { width: 1440, height: 900 },
     grid: DEFAULT_GRID,
   };
@@ -368,7 +454,7 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
       const next = structuredClone(doc);
       for (const patch of patches) {
         updateShape(next.layers, patch.id, (shape) =>
-          typeof patch.changes === "function" ? (patch.changes as any)(shape) : { ...shape, ...patch.changes }
+          sanitizeShape(typeof patch.changes === "function" ? (patch.changes as any)(shape) : { ...shape, ...patch.changes })
         );
       }
       const changedIds = Array.from(new Set(patches.map((p) => p.id)));
@@ -380,7 +466,7 @@ export function EditorProvider({ children }: { children: React.ReactNode }) {
   const updateShapeProps = useCallback(
     (id: string, changes: Partial<Shape> | ((shape: Shape) => Shape)) => {
       const next = structuredClone(doc);
-      updateShape(next.layers, id, (shape) => (typeof changes === "function" ? (changes as any)(shape) : { ...shape, ...changes }));
+      updateShape(next.layers, id, (shape) => sanitizeShape(typeof changes === "function" ? (changes as any)(shape) : { ...shape, ...changes }));
       commit(next, true, [id]);
     },
     [commit, doc]

@@ -24,7 +24,7 @@ type ThemeContextValue = {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [themeId, setThemeId] = useState<ThemeId>("purple");
+  const [themeId, setThemeId] = useState<ThemeId>("pink");
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", themeId);
